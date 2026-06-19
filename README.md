@@ -17,6 +17,8 @@ FUTEMON_AUTH_MODE=local
 OPENROUTER_API_KEY=sk-or-...
 ENV_ENCRYPTION_KEY=12345678901234567890123456789012
 SESSION_SECRET=change-this-long-random-string
+FUTEMON_DB_PATH=/app/data/futemon.db
+FUTEMON_ARTWORK_DIR=/app/data/pokemon-artwork
 ```
 
 Keys used in this quick start:
@@ -24,6 +26,7 @@ Keys used in this quick start:
 - `OPENROUTER_API_KEY`: create this in your OpenRouter account. It is the key used to call `openai/gpt-oss-120b:free` or whichever `OPENROUTER_MODEL` you configure.
 - `ENV_ENCRYPTION_KEY`: local app secret used to encrypt saved BYOK API keys in SQLite. Use either a raw 32-character string, a 32-byte base64 value, or a 32-byte hex value.
 - `SESSION_SECRET`: local app secret used to sign browser sessions. Use a long random string.
+- `FUTEMON_DB_PATH`: keep this as `/app/data/futemon.db` when running with Docker so migrations and the server use the same persistent volume.
 
 Build the Docker image:
 
@@ -40,7 +43,7 @@ docker run --rm \
   --env-file .env \
   -v futemon-data:/app/data \
   futemon \
-  /app/futemon-migrate --db /app/data/futemon.db --seed-pokemon --pokemon-limit 151
+  /app/futemon-migrate --seed-pokemon --pokemon-limit 151
 ```
 
 Run the server:
@@ -56,6 +59,8 @@ docker run --rm \
 Open `http://localhost:8080`.
 
 The Docker image defaults to `FUTEMON_AUTH_MODE=local` and stores SQLite data at `/app/data/futemon.db`. In local auth mode the app uses the seeded demo user and does not require Google OAuth. This is intended for trusted/internal deployments.
+
+If the seed prints `seeded #151 Mew` but the app still only shows the example Pokemon, check that your `.env` does not set `FUTEMON_DB_PATH=futemon.db`. In Docker it must point to `/app/data/futemon.db`.
 
 ## Server Flags
 

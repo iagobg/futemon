@@ -11,7 +11,11 @@ import (
 )
 
 func main() {
-	dbPath := flag.String("db", "futemon.db", "SQLite database path")
+	defaultDBPath := os.Getenv("FUTEMON_DB_PATH")
+	if defaultDBPath == "" {
+		defaultDBPath = "futemon.db"
+	}
+	dbPath := flag.String("db", defaultDBPath, "SQLite database path")
 	seedPokemon := flag.Bool("seed-pokemon", false, "Fetch Pokemon data from PokeAPI and upsert it locally")
 	pokemonLimit := flag.Int("pokemon-limit", 151, "Number of Pokemon IDs to fetch when --seed-pokemon is set")
 	artworkDir := flag.String("artwork-dir", os.Getenv("FUTEMON_ARTWORK_DIR"), "Directory where Pokemon official artwork PNGs are cached")

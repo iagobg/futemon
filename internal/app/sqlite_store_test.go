@@ -1,6 +1,7 @@
 package app
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -27,6 +28,41 @@ func TestSQLiteStoreSeedsDemoData(t *testing.T) {
 	}
 	if got := len(store.Tournaments()); got != 2 {
 		t.Fatalf("tournaments = %d, want 2", got)
+	}
+}
+
+func TestSQLiteStoreSeedsDemoTeamsWhenPokemonAlreadyExist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "futemon.db")
+	db, err := sql.Open("sqlite3", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(migrationSQL); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO pokemons (
+			id, name, artwork_url, local_artwork_url, type_1, type_2, hp, attack, defense,
+			special_attack, special_defense, speed, description, abilities
+		) VALUES (1, 'bulbasaur', '', '', 'grass', 'poison', 45, 49, 49, 65, 65, 45, '', '[]')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if got := len(store.GlobalTeams("recent")); got != 3 {
+		t.Fatalf("global teams = %d, want 3", got)
+	}
+	if got := len(store.TeamHistory("team-kanto-press")); got == 0 {
+		t.Fatalf("expected demo match history for kanto")
 	}
 }
 

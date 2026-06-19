@@ -202,14 +202,6 @@ func (s *SQLiteStore) migrate() error {
 }
 
 func (s *SQLiteStore) seedDemoData() error {
-	var count int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM pokemons").Scan(&count); err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-
 	tx, err := s.db.Begin()
 	if err != nil {
 		return err
@@ -218,7 +210,7 @@ func (s *SQLiteStore) seedDemoData() error {
 
 	for _, pokemon := range samplePokemon() {
 		if _, err := tx.Exec(`
-			INSERT INTO pokemons (
+			INSERT OR IGNORE INTO pokemons (
 				id, name, artwork_url, local_artwork_url, type_1, type_2, hp, attack, defense, special_attack,
 				special_defense, speed, description, abilities
 			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -232,7 +224,7 @@ func (s *SQLiteStore) seedDemoData() error {
 
 	now := time.Now().UTC()
 	if _, err := tx.Exec(`
-		INSERT INTO users (id, google_id, display_name, email, avatar_icon, role)
+		INSERT OR IGNORE INTO users (id, google_id, display_name, email, avatar_icon, role)
 		VALUES
 			('user-demo', 'demo-google-id', 'Treinador Demo', 'demo@futemon.local', 1, 'admin'),
 			('user-rival', 'rival-google-id', 'Rival Local', 'rival@futemon.local', 2, 'user'),
@@ -261,7 +253,7 @@ func (s *SQLiteStore) seedDemoData() error {
 	}
 	for _, team := range teams {
 		if _, err := tx.Exec(`
-			INSERT INTO teams (
+			INSERT OR IGNORE INTO teams (
 				id, user_id, name, goalkeeper_id, goalkeeper_ability, fixo_id, fixo_ability,
 				ala_esquerda_id, ala_esquerda_ability, ala_direita_id, ala_direita_ability,
 				pivo_id, pivo_ability, is_frozen, created_at
@@ -275,7 +267,7 @@ func (s *SQLiteStore) seedDemoData() error {
 	}
 
 	if _, err := tx.Exec(`
-		INSERT INTO tournaments (id, name, status, created_by, created_at)
+		INSERT OR IGNORE INTO tournaments (id, name, status, created_by, created_at)
 		VALUES
 			('tourn-001', 'Copa Professor Carvalho', 'registration', 'user-demo', ?),
 			('tourn-002', 'Liga dos Centros Pokemon', 'active', 'user-demo', ?)`,
@@ -294,7 +286,7 @@ func (s *SQLiteStore) seedDemoData() error {
 	}
 	for _, registration := range registrations {
 		if _, err := tx.Exec(`
-			INSERT INTO tournament_registrations (id, tournament_id, team_id)
+			INSERT OR IGNORE INTO tournament_registrations (id, tournament_id, team_id)
 			VALUES (?, ?, ?)`,
 			registration.ID, registration.TournamentID, registration.TeamID,
 		); err != nil {
