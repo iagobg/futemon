@@ -133,6 +133,7 @@ Notes:
 - If `FUTEMON_LLM_FALLBACK_ON_ERROR=1`, LLM failures fall back to the sample simulation.
 - By default, LLM failures are returned as errors so they can be diagnosed from server logs.
 - `FUTEMON_LLM_STRICT_SCHEMA=1` sends `response_format: json_schema`; leave it off if the selected model/provider rejects strict structured output.
+- The current model handles the shorter systemprompt (systemprompt.md) better, depending on the model you're using you may have better results with systemprompt_longer.md
 
 ## Rate Limit And BYOK
 
