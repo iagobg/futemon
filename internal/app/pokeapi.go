@@ -58,11 +58,13 @@ func (s PokeAPISeeder) FetchPokemon(ctx context.Context, id int) (Pokemon, error
 
 	pokemon := Pokemon{
 		ID:          detail.ID,
-		Name:        detail.Name,
+		Name:        pokemonDisplayName(detail.Name),
+		ArtworkURL:  detail.Sprites.Other.OfficialArtwork.FrontDefault,
 		Type1:       detail.Types[0].Type.Name,
 		Description: firstFlavorText(species.FlavorTextEntries),
 		Abilities:   string(abilityJSON),
 	}
+	pokemon = ensurePokemonArtwork(pokemon)
 	if len(detail.Types) > 1 {
 		pokemon.Type2 = detail.Types[1].Type.Name
 	}
@@ -93,11 +95,13 @@ func (s PokeAPISeeder) resourceURL(resource string, id int) string {
 func (s *SQLiteStore) UpsertPokemon(pokemon Pokemon) error {
 	_, err := s.db.Exec(`
 		INSERT INTO pokemons (
-			id, name, type_1, type_2, hp, attack, defense, special_attack,
+			id, name, artwork_url, local_artwork_url, type_1, type_2, hp, attack, defense, special_attack,
 			special_defense, speed, description, abilities
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
+			artwork_url = excluded.artwork_url,
+			local_artwork_url = excluded.local_artwork_url,
 			type_1 = excluded.type_1,
 			type_2 = excluded.type_2,
 			hp = excluded.hp,
@@ -108,7 +112,7 @@ func (s *SQLiteStore) UpsertPokemon(pokemon Pokemon) error {
 			speed = excluded.speed,
 			description = excluded.description,
 			abilities = excluded.abilities`,
-		pokemon.ID, pokemon.Name, pokemon.Type1, nullString(pokemon.Type2), pokemon.HP,
+		pokemon.ID, pokemonDisplayName(pokemon.Name), pokemon.ArtworkURL, pokemon.LocalArtworkURL, pokemon.Type1, nullString(pokemon.Type2), pokemon.HP,
 		pokemon.Attack, pokemon.Defense, pokemon.SpecialAttack, pokemon.SpecialDefense,
 		pokemon.Speed, pokemon.Description, pokemon.Abilities,
 	)
@@ -138,6 +142,13 @@ type pokeAPIPokemon struct {
 			Name string `json:"name"`
 		} `json:"stat"`
 	} `json:"stats"`
+	Sprites struct {
+		Other struct {
+			OfficialArtwork struct {
+				FrontDefault string `json:"front_default"`
+			} `json:"official-artwork"`
+		} `json:"other"`
+	} `json:"sprites"`
 	Abilities []struct {
 		Ability struct {
 			Name string `json:"name"`

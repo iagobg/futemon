@@ -31,6 +31,21 @@ To save Gemini BYOK credentials, configure a 32-byte encryption key:
 ENV_ENCRYPTION_KEY=12345678901234567890123456789012 go run ./cmd/server
 ```
 
+The development simulator reads `examples/sample_match.json` by default. Override it with:
+
+```sh
+FUTEMON_SAMPLE_MATCH_JSON=/path/to/match.json go run ./cmd/server
+```
+
+To enable Google OAuth login, create OAuth credentials in Google Cloud and set:
+
+```sh
+GOOGLE_CLIENT_ID=...
+GOOGLE_CLIENT_SECRET=...
+GOOGLE_REDIRECT_URL=http://localhost:8080/auth/google/callback
+SESSION_SECRET=change-this-long-random-string
+```
+
 ## Test
 
 ```sh
@@ -45,11 +60,13 @@ Apply migrations and demo seed data:
 go run ./cmd/migrate --db futemon.db
 ```
 
-Fetch Pokemon data from PokeAPI into the local cache:
+Fetch Pokemon data from PokeAPI into the local cache. This also mirrors official artwork PNGs into `data/pokemon-artwork` and stores `/static/pokemon-artwork/{id}.png` as the preferred image URL:
 
 ```sh
 go run ./cmd/migrate --db futemon.db --seed-pokemon --pokemon-limit 151
 ```
+
+Override the artwork directory with `FUTEMON_ARTWORK_DIR` or `--artwork-dir` when seeding. The server also reads `FUTEMON_ARTWORK_DIR` and serves `/static/pokemon-artwork/*` with a long immutable cache header.
 
 ## Product Roadmap
 

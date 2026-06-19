@@ -16,6 +16,7 @@ func TestPokeAPISeederFetchPokemon(t *testing.T) {
 		w.Write([]byte(`{
 			"id": 1,
 			"name": "bulbasaur",
+			"sprites": {"other": {"official-artwork": {"front_default": "https://img.example/bulbasaur.png"}}},
 			"species": {"url": "` + server.URL + `/pokemon-species/1"},
 			"types": [{"slot": 1, "type": {"name": "grass"}}, {"slot": 2, "type": {"name": "poison"}}],
 			"stats": [
@@ -51,8 +52,14 @@ func TestPokeAPISeederFetchPokemon(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if pokemon.ID != 1 || pokemon.Name != "bulbasaur" {
+	if pokemon.ID != 1 || pokemon.Name != "Bulbasaur" {
 		t.Fatalf("pokemon identity = #%d %s", pokemon.ID, pokemon.Name)
+	}
+	if pokemon.ArtworkURL != "https://img.example/bulbasaur.png" {
+		t.Fatalf("artwork url = %q", pokemon.ArtworkURL)
+	}
+	if pokemon.DisplayArtworkURL() != pokemon.ArtworkURL {
+		t.Fatalf("display artwork should fall back to external url")
 	}
 	if pokemon.Type1 != "grass" || pokemon.Type2 != "poison" {
 		t.Fatalf("types = %s/%s", pokemon.Type1, pokemon.Type2)

@@ -9,6 +9,10 @@ import (
 )
 
 func main() {
+	if err := app.LoadDotEnv(".env"); err != nil {
+		log.Fatalf("load .env: %v", err)
+	}
+
 	addr := ":8080"
 	if port := os.Getenv("PORT"); port != "" {
 		addr = ":" + port

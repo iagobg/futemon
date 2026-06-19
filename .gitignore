@@ -1,3 +1,6 @@
 *.db
 *.db-shm
 *.db-wal
+.env
+data/pokemon-artwork/
+futemon.db

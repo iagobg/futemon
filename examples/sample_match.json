@@ -1,0 +1,68 @@
+{
+  "events": [
+    {
+      "minute": 0,
+      "type": "kickoff",
+      "narrative": "Apita o árbitro! A bola rola para o clássico de hoje! O elenco do {{team_a.name}}, liderado por {{team_a.fixo}}, mede forças contra o temido {{team_b.name}} de {{team_b.fixo}}. Os dois quintetos entram em quadra com os treinadores jurando de pé junto que a Pokédex não proíbe táticas de pressão total na saída de bola."
+    },
+    {
+      "minute": 6,
+      "type": "close_chance",
+      "team_ref": "team_a",
+      "pokemon_ref": "ala_direita",
+      "narrative": "{{team_a.ala_direita}} limpa a marcação de {{team_b.ala_esquerda}} na ala, pisa na bola e solta uma bomba cruzada. Passou raspando a trave, deixando o goleiro {{team_b.goleiro}} estático e o ginásio sem fôlego. Quase o primeiro!"
+    },
+    {
+      "minute": 12,
+      "type": "foul",
+      "team_ref": "team_b",
+      "pokemon_ref": "fixo",
+      "narrative": "{{team_a.ala_esquerda}} avança pela ala esquerda, chega em posição para cruzar. {{team_b.fixo}} chega no lance atrasado e faz um carrinho para parar a jogada. Falta!"
+    },
+    {
+      "minute": 18,
+      "type": "goal",
+      "team_ref": "team_a",
+      "pokemon_ref": "pivo",
+      "narrative": "{{team_a.ala_direita}} rouba a bola de {{team_b.fixo}} e lança para {{team_a.pivo}}, que faz o clássico de sustentação: recebe de costas, gira blindando a bola com o próprio corpo e prepara o arremate no ângulo de {{team_b.goleiro}}... {goal} GOOOOL DO TIME DA CASA! Uma pintura com a assinatura da força bruta!"
+    },
+    {
+      "minute": 20,
+      "type": "halftime",
+      "narrative": "Intervalo de jogo! Os times descem para o vestiário. O time da casa vai vencendo graças à eficiência cirúrgica de {{team_a.pivo}}, enquanto {{team_b.fixo}} e seus companheiros precisam de duas coisas: ajustar a linha de quatro e usar um Max Potion na moral do grupo."
+    },
+    {
+      "minute": 27,
+      "type": "goal",
+      "team_ref": "team_b",
+      "pokemon_ref": "ala_esquerda",
+      "narrative": "Transição ofensiva mortal! {{team_b.ala_esquerda}} acelera no contragolpe deixando {{team_a.ala_direita}} na saudade. A velocidade é tanta que a recomposição adversária virou mero conceito abstrato. Ele ajeita o corpo na saída de {{team_a.goleiro}}... {goal} GOOOOL DE EMPATE! Chapou com categoria!"
+    },
+    {
+      "minute": 33,
+      "type": "injury",
+      "team_ref": "team_b",
+      "pokemon_ref": "fixo",
+      "narrative": "Jogo parado para atendimento. {{team_b.fixo}} divide forte no meio da quadra com {{team_a.pivo}}, sente a pancada e desaba na quadra dura. O departamento médico entra correndo com a recomendação clássica: spray milagroso, gelo e menos heroísmo."
+    },
+    {
+      "minute": 38,
+      "type": "goal",
+      "team_ref": "team_a",
+      "pokemon_ref": "ala_direita",
+      "narrative": "Jogada ensaiada perfeita de escanteio. {{team_a.pivo}} finge que vai na bola, mas ela viaja até o segundo pau, onde {{team_a.ala_direita}} surge livre pelas costas de {{team_b.ala_esquerda}} e estica a perna para escorar... {goal} GOOOOL NOS MINUTOS FINAIS! Inteligência tática pura!"
+    },
+    {
+      "minute": 40,
+      "type": "fulltime",
+      "narrative": "Fim de papo! Apita o árbitro, fim de jogo. A partida termina sob aplausos, reclamações protocolares dos integrantes do {{team_b.name}} com a arbitragem e a nítida certeza de que o futsal com Pokémon é o esporte mais imprevisível do planeta."
+    }
+  ],
+  "consequences": [
+    {
+      "team_ref": "team_b",
+      "pokemon_ref": "fixo",
+      "effect_description": "Entra na próxima rodada com sérias ressalvas psicológicas para disputar bolas divididas contra {{team_a.pivo}}."
+    }
+  ]
+}

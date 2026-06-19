@@ -1,0 +1,65 @@
+package app
+
+import "testing"
+
+func TestBuildMatchFromSimulationResolvesRefsAndScore(t *testing.T) {
+	teamA := Team{
+		ID:         "a",
+		Name:       "Time A",
+		AlaDireita: Pokemon{ID: 25, Name: "Pikachu"},
+		Pivo:       Pokemon{ID: 68, Name: "Machamp"},
+	}
+	teamB := Team{
+		ID:          "b",
+		Name:        "Time B",
+		Fixo:        Pokemon{ID: 95, Name: "Onix"},
+		AlaEsquerda: Pokemon{ID: 26, Name: "Raichu"},
+	}
+	payload := SimulationPayload{
+		Events: []SimulationEvent{
+			{Minute: 27, Type: "goal", TeamRef: "team_b", PokemonRef: "ala_esquerda", Narrative: "{{team_b.ala_esquerda}} empatou para o {{team_b.name}}."},
+			{Minute: 18, Type: "goal", TeamRef: "team_a", PokemonRef: "pivo", Narrative: "{{team_a.pivo}} abriu o placar contra {{team_b.fixo}}."},
+		},
+		Consequences: []SimulationConsequence{
+			{TeamRef: "team_b", PokemonRef: "fixo", EffectDescription: "{{team_b.fixo}} ficou cansado marcando {{team_a.pivo}}."},
+		},
+	}
+	normalizeSimulationPayload(&payload)
+
+	match := BuildMatchFromSimulation(teamA, teamB, payload)
+
+	if match.Events[0].Minute != 18 {
+		t.Fatalf("first event minute = %d, want 18", match.Events[0].Minute)
+	}
+	if match.Events[0].TeamID != "a" || match.Events[0].PokemonID != 68 {
+		t.Fatalf("first goal attribution = %+v", match.Events[0])
+	}
+	if match.Events[0].Narrative != "Machamp abriu o placar contra Onix." {
+		t.Fatalf("first narrative = %q", match.Events[0].Narrative)
+	}
+	if match.Events[1].TeamID != "b" || match.Events[1].PokemonID != 26 {
+		t.Fatalf("second goal attribution = %+v", match.Events[1])
+	}
+	if match.ScoreTeamA != 1 || match.ScoreTeamB != 1 {
+		t.Fatalf("score = %d x %d, want 1 x 1", match.ScoreTeamA, match.ScoreTeamB)
+	}
+	if len(match.Consequences) != 1 || match.Consequences[0].TeamID != "b" || match.Consequences[0].PokemonID != 95 {
+		t.Fatalf("consequence attribution = %+v", match.Consequences)
+	}
+	if match.Consequences[0].EffectDescription != "Onix ficou cansado marcando Machamp." {
+		t.Fatalf("consequence text = %q", match.Consequences[0].EffectDescription)
+	}
+}
+
+func TestLoadSimulationPayloadFromDefaultFile(t *testing.T) {
+	payload, err := LoadSimulationPayload("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Events) == 0 {
+		t.Fatal("expected sample events")
+	}
+	if payload.Events[0].Minute != 0 {
+		t.Fatalf("first sample minute = %d, want 0", payload.Events[0].Minute)
+	}
+}

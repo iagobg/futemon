@@ -1,20 +1,32 @@
 package app
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type Pokemon struct {
-	ID             int
-	Name           string
-	Type1          string
-	Type2          string
-	HP             int
-	Attack         int
-	Defense        int
-	SpecialAttack  int
-	SpecialDefense int
-	Speed          int
-	Description    string
-	Abilities      string
+	ID              int
+	Name            string
+	ArtworkURL      string
+	LocalArtworkURL string
+	Type1           string
+	Type2           string
+	HP              int
+	Attack          int
+	Defense         int
+	SpecialAttack   int
+	SpecialDefense  int
+	Speed           int
+	Description     string
+	Abilities       string
+}
+
+func (p Pokemon) DisplayArtworkURL() string {
+	if p.LocalArtworkURL != "" {
+		return p.LocalArtworkURL
+	}
+	return p.ArtworkURL
 }
 
 type User struct {
@@ -22,6 +34,8 @@ type User struct {
 	GoogleID        string
 	DisplayName     string
 	Email           string
+	PictureURL      string
+	AvatarIcon      int
 	GeminiAPIKey    string
 	Role            string
 	HasGeminiAPIKey bool
@@ -30,47 +44,108 @@ type User struct {
 type AccountInput struct {
 	UserID       string
 	DisplayName  string
+	AvatarIcon   int
 	GeminiAPIKey string
 	ClearAPIKey  bool
 }
 
 type Team struct {
-	ID          string
-	UserID      string
-	Name        string
-	Goalkeeper  Pokemon
-	Fixo        Pokemon
-	AlaEsquerda Pokemon
-	AlaDireita  Pokemon
-	Pivo        Pokemon
-	IsFrozen    bool
-	CreatedAt   time.Time
+	ID                 string
+	UserID             string
+	Name               string
+	Goalkeeper         Pokemon
+	GoalkeeperAbility  string
+	Fixo               Pokemon
+	FixoAbility        string
+	AlaEsquerda        Pokemon
+	AlaEsquerdaAbility string
+	AlaDireita         Pokemon
+	AlaDireitaAbility  string
+	Pivo               Pokemon
+	PivoAbility        string
+	IsFrozen           bool
+	IsRetired          bool
+	CreatedAt          time.Time
+	Record             TeamRecord
+	LeaderboardScore   float64
+}
+
+type TeamRecord struct {
+	Wins   int
+	Draws  int
+	Losses int
+	Played int
+}
+
+type TransferWindow struct {
+	Start     time.Time
+	End       time.Time
+	Used      bool
+	Remaining int
+}
+
+type TeamTransfer struct {
+	ID             string
+	TeamID         string
+	Kind           string
+	Summary        string
+	Before         Team
+	After          Team
+	WindowStart    time.Time
+	CreatedAt      time.Time
+	ChangedPlayers []PlayerTransfer
+}
+
+type PlayerTransfer struct {
+	Position string
+	From     Pokemon
+	To       Pokemon
+}
+
+func (r TeamRecord) Label() string {
+	if r.Played == 0 {
+		return "0J"
+	}
+	return fmt.Sprintf("%dV %dE %dD", r.Wins, r.Draws, r.Losses)
+}
+
+func (r TeamRecord) WinPercent() int {
+	if r.Played == 0 {
+		return 0
+	}
+	return (r.Wins * 100) / r.Played
 }
 
 type TeamInput struct {
-	ID            string
-	UserID        string
-	Name          string
-	GoalkeeperID  int
-	FixoID        int
-	AlaEsquerdaID int
-	AlaDireitaID  int
-	PivoID        int
+	ID                 string
+	UserID             string
+	Name               string
+	GoalkeeperID       int
+	GoalkeeperAbility  string
+	FixoID             int
+	FixoAbility        string
+	AlaEsquerdaID      int
+	AlaEsquerdaAbility string
+	AlaDireitaID       int
+	AlaDireitaAbility  string
+	PivoID             int
+	PivoAbility        string
 }
 
 func (t Team) Roster() []PositionedPokemon {
 	return []PositionedPokemon{
-		{Position: "Goleiro", Pokemon: t.Goalkeeper},
-		{Position: "Fixo", Pokemon: t.Fixo},
-		{Position: "Ala Esquerda", Pokemon: t.AlaEsquerda},
-		{Position: "Ala Direita", Pokemon: t.AlaDireita},
-		{Position: "Pivo", Pokemon: t.Pivo},
+		{Position: "Goleiro", Pokemon: t.Goalkeeper, Ability: t.GoalkeeperAbility},
+		{Position: "Fixo", Pokemon: t.Fixo, Ability: t.FixoAbility},
+		{Position: "Ala Esquerda", Pokemon: t.AlaEsquerda, Ability: t.AlaEsquerdaAbility},
+		{Position: "Ala Direita", Pokemon: t.AlaDireita, Ability: t.AlaDireitaAbility},
+		{Position: "Pivo", Pokemon: t.Pivo, Ability: t.PivoAbility},
 	}
 }
 
 type PositionedPokemon struct {
 	Position string
 	Pokemon  Pokemon
+	Ability  string
 }
 
 type Tournament struct {
@@ -95,6 +170,36 @@ type MatchConsequence struct {
 	EffectDescription string `json:"effect_description"`
 }
 
+type MatchSyncState struct {
+	MatchID      string `json:"match_id"`
+	MatchVersion string `json:"match_version"`
+	Status       string `json:"status"`
+	ServerNowMS  int64  `json:"server_now_ms"`
+	StartTimeMS  int64  `json:"start_time_ms"`
+	EndedAtMS    int64  `json:"ended_at_ms"`
+}
+
+type MatchSummary struct {
+	ID            string
+	TeamAName     string
+	TeamBName     string
+	ScoreTeamA    int
+	ScoreTeamB    int
+	PlayedAt      time.Time
+	TeamResult    string
+	TeamScoreLine string
+	GoalsTeamA    []MatchGoalSummary
+	GoalsTeamB    []MatchGoalSummary
+}
+
+type MatchGoalSummary struct {
+	Minute      int
+	TeamID      string
+	TeamName    string
+	PokemonID   int
+	PokemonName string
+}
+
 type MatchResult struct {
 	ID           string             `json:"-"`
 	TeamA        Team               `json:"-"`
@@ -104,6 +209,7 @@ type MatchResult struct {
 	Events       []MatchEvent       `json:"events"`
 	Consequences []MatchConsequence `json:"consequences"`
 	StartTime    time.Time          `json:"-"`
+	EndTime      time.Time          `json:"-"`
 }
 
 func (m MatchResult) Score() (int, int) {

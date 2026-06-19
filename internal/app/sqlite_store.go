@@ -15,6 +15,8 @@ const migrationSQL = `
 CREATE TABLE IF NOT EXISTS pokemons (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
+  artwork_url TEXT NOT NULL DEFAULT '',
+  local_artwork_url TEXT NOT NULL DEFAULT '',
   type_1 TEXT NOT NULL,
   type_2 TEXT,
   hp INTEGER NOT NULL,
@@ -32,6 +34,8 @@ CREATE TABLE IF NOT EXISTS users (
   google_id TEXT UNIQUE NOT NULL,
   display_name TEXT NOT NULL,
   email TEXT NOT NULL,
+  picture_url TEXT NOT NULL DEFAULT '',
+  avatar_icon INTEGER NOT NULL DEFAULT 0,
   gemini_api_key TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   deleted_at TEXT
@@ -42,10 +46,15 @@ CREATE TABLE IF NOT EXISTS teams (
   user_id TEXT NOT NULL REFERENCES users(id),
   name TEXT NOT NULL,
   goalkeeper_id INTEGER NOT NULL REFERENCES pokemons(id),
+  goalkeeper_ability TEXT NOT NULL DEFAULT '',
   fixo_id INTEGER NOT NULL REFERENCES pokemons(id),
+  fixo_ability TEXT NOT NULL DEFAULT '',
   ala_esquerda_id INTEGER NOT NULL REFERENCES pokemons(id),
+  ala_esquerda_ability TEXT NOT NULL DEFAULT '',
   ala_direita_id INTEGER NOT NULL REFERENCES pokemons(id),
+  ala_direita_ability TEXT NOT NULL DEFAULT '',
   pivo_id INTEGER NOT NULL REFERENCES pokemons(id),
+  pivo_ability TEXT NOT NULL DEFAULT '',
   is_frozen INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   deleted_at TEXT
@@ -56,10 +65,13 @@ CREATE TABLE IF NOT EXISTS matches (
   mode TEXT NOT NULL,
   team_a_id TEXT NOT NULL REFERENCES teams(id),
   team_b_id TEXT NOT NULL REFERENCES teams(id),
+  team_a_snapshot TEXT NOT NULL DEFAULT '{}',
+  team_b_snapshot TEXT NOT NULL DEFAULT '{}',
   score_a INTEGER,
   score_b INTEGER,
   raw_json_output TEXT NOT NULL DEFAULT '{}',
   start_time TEXT,
+  ended_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -93,6 +105,17 @@ CREATE TABLE IF NOT EXISTS tournament_registrations (
   team_id TEXT NOT NULL REFERENCES teams(id),
   consequences_log TEXT NOT NULL DEFAULT '',
   UNIQUE(tournament_id, team_id)
+);
+
+CREATE TABLE IF NOT EXISTS team_transactions (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  kind TEXT NOT NULL,
+  before_snapshot TEXT NOT NULL DEFAULT '{}',
+  after_snapshot TEXT NOT NULL DEFAULT '{}',
+  summary TEXT NOT NULL DEFAULT '',
+  window_start TEXT,
+  created_at TEXT NOT NULL
 );`
 
 type SQLiteStore struct {
@@ -112,6 +135,14 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 		return nil, err
 	}
 	if err := store.seedDemoData(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.ensureInitialTeamTransactions(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := store.seedDemoMatches(); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -135,7 +166,39 @@ func (s *SQLiteStore) migrate() error {
 	if _, err := s.db.Exec(migrationSQL); err != nil {
 		return err
 	}
-	return s.ensureColumn("teams", "deleted_at", "TEXT")
+	if err := s.ensureColumn("teams", "deleted_at", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "picture_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "avatar_icon", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	for _, column := range []string{"goalkeeper_ability", "fixo_ability", "ala_esquerda_ability", "ala_direita_ability", "pivo_ability"} {
+		if err := s.ensureColumn("teams", column, "TEXT NOT NULL DEFAULT ''"); err != nil {
+			return err
+		}
+	}
+	if err := s.ensureColumn("pokemons", "artwork_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("pokemons", "local_artwork_url", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("matches", "ended_at", "TEXT"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("matches", "team_a_snapshot", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("matches", "team_b_snapshot", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
+		return err
+	}
+	if err := s.backfillPokemonArtworkURLs(); err != nil {
+		return err
+	}
+	return s.ensureInitialTeamTransactions()
 }
 
 func (s *SQLiteStore) seedDemoData() error {
@@ -156,10 +219,10 @@ func (s *SQLiteStore) seedDemoData() error {
 	for _, pokemon := range samplePokemon() {
 		if _, err := tx.Exec(`
 			INSERT INTO pokemons (
-				id, name, type_1, type_2, hp, attack, defense, special_attack,
+				id, name, artwork_url, local_artwork_url, type_1, type_2, hp, attack, defense, special_attack,
 				special_defense, speed, description, abilities
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			pokemon.ID, pokemon.Name, pokemon.Type1, nullString(pokemon.Type2), pokemon.HP,
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			pokemon.ID, pokemon.Name, pokemon.ArtworkURL, pokemon.LocalArtworkURL, pokemon.Type1, nullString(pokemon.Type2), pokemon.HP,
 			pokemon.Attack, pokemon.Defense, pokemon.SpecialAttack, pokemon.SpecialDefense,
 			pokemon.Speed, pokemon.Description, pokemon.Abilities,
 		); err != nil {
@@ -169,32 +232,43 @@ func (s *SQLiteStore) seedDemoData() error {
 
 	now := time.Now().UTC()
 	if _, err := tx.Exec(`
-		INSERT INTO users (id, google_id, display_name, email, role)
+		INSERT INTO users (id, google_id, display_name, email, avatar_icon, role)
 		VALUES
-			('user-demo', 'demo-google-id', 'Treinador Demo', 'demo@futemon.local', 'admin'),
-			('user-rival', 'rival-google-id', 'Rival Local', 'rival@futemon.local', 'user'),
-			('user-misty', 'misty-google-id', 'Lider do Ginasio Azul', 'misty@futemon.local', 'user')`); err != nil {
+			('user-demo', 'demo-google-id', 'Treinador Demo', 'demo@futemon.local', 1, 'admin'),
+			('user-rival', 'rival-google-id', 'Rival Local', 'rival@futemon.local', 2, 'user'),
+			('user-misty', 'misty-google-id', 'Lider do Ginasio Azul', 'misty@futemon.local', 3, 'user')`); err != nil {
 		return err
 	}
 
 	teams := []struct {
-		ID, UserID, Name                                string
-		Goalkeeper, Fixo, AlaEsquerda, AlaDireita, Pivo int
-		IsFrozen                                        bool
-		CreatedAt                                       time.Time
+		ID, UserID, Name   string
+		Goalkeeper         int
+		GoalkeeperAbility  string
+		Fixo               int
+		FixoAbility        string
+		AlaEsquerda        int
+		AlaEsquerdaAbility string
+		AlaDireita         int
+		AlaDireitaAbility  string
+		Pivo               int
+		PivoAbility        string
+		IsFrozen           bool
+		CreatedAt          time.Time
 	}{
-		{"team-kanto-press", "user-demo", "Kanto Press", 9, 6, 25, 4, 68, false, now.Add(-72 * time.Hour)},
-		{"team-paleta-bolada", "user-rival", "Paleta Bolada", 143, 95, 26, 7, 149, true, now.Add(-48 * time.Hour)},
-		{"team-ginasio-azul", "user-misty", "Ginasio Azul FC", 130, 55, 121, 7, 131, false, now.Add(-24 * time.Hour)},
+		{"team-kanto-press", "user-demo", "Kanto Press", 9, "torrent", 6, "blaze", 25, "static", 4, "blaze", 68, "no-guard", false, now.Add(-72 * time.Hour)},
+		{"team-paleta-bolada", "user-rival", "Paleta Bolada", 143, "thick-fat", 95, "sturdy", 26, "static", 7, "torrent", 149, "inner-focus", true, now.Add(-48 * time.Hour)},
+		{"team-ginasio-azul", "user-misty", "Ginasio Azul FC", 130, "intimidate", 55, "cloud-nine", 121, "natural-cure", 7, "torrent", 131, "water-absorb", false, now.Add(-24 * time.Hour)},
 	}
 	for _, team := range teams {
 		if _, err := tx.Exec(`
 			INSERT INTO teams (
-				id, user_id, name, goalkeeper_id, fixo_id, ala_esquerda_id,
-				ala_direita_id, pivo_id, is_frozen, created_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			team.ID, team.UserID, team.Name, team.Goalkeeper, team.Fixo, team.AlaEsquerda,
-			team.AlaDireita, team.Pivo, boolInt(team.IsFrozen), formatTime(team.CreatedAt),
+				id, user_id, name, goalkeeper_id, goalkeeper_ability, fixo_id, fixo_ability,
+				ala_esquerda_id, ala_esquerda_ability, ala_direita_id, ala_direita_ability,
+				pivo_id, pivo_ability, is_frozen, created_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			team.ID, team.UserID, team.Name, team.Goalkeeper, team.GoalkeeperAbility, team.Fixo, team.FixoAbility,
+			team.AlaEsquerda, team.AlaEsquerdaAbility, team.AlaDireita, team.AlaDireitaAbility,
+			team.Pivo, team.PivoAbility, boolInt(team.IsFrozen), formatTime(team.CreatedAt),
 		); err != nil {
 			return err
 		}
@@ -228,12 +302,75 @@ func (s *SQLiteStore) seedDemoData() error {
 		}
 	}
 
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *SQLiteStore) seedDemoMatches() error {
+	count, err := countRows(s.db, "matches")
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+
+	kanto, okA := s.FindTeam("team-kanto-press")
+	paleta, okB := s.FindTeam("team-paleta-bolada")
+	ginasio, okC := s.FindTeam("team-ginasio-azul")
+	if !okA || !okB || !okC {
+		return nil
+	}
+	now := time.Now().Add(-5 * 24 * time.Hour)
+	matches := []MatchResult{
+		demoMatch("match-demo-001", kanto, paleta, now, []demoGoal{{3, "a", kanto.AlaEsquerda.ID}, {14, "b", paleta.Pivo.ID}, {31, "a", kanto.Pivo.ID}}),
+		demoMatch("match-demo-002", ginasio, kanto, now.Add(18*time.Hour), []demoGoal{{9, "a", ginasio.Pivo.ID}, {19, "a", ginasio.AlaDireita.ID}, {33, "b", kanto.AlaDireita.ID}}),
+		demoMatch("match-demo-003", paleta, ginasio, now.Add(36*time.Hour), []demoGoal{{8, "a", paleta.Pivo.ID}, {16, "b", ginasio.Pivo.ID}, {27, "a", paleta.AlaEsquerda.ID}}),
+		demoMatch("match-demo-004", kanto, ginasio, now.Add(54*time.Hour), []demoGoal{{5, "a", kanto.Pivo.ID}, {22, "b", ginasio.Pivo.ID}, {38, "b", ginasio.AlaEsquerda.ID}}),
+		demoMatch("match-demo-005", paleta, kanto, now.Add(72*time.Hour), []demoGoal{{12, "b", kanto.AlaEsquerda.ID}}),
+	}
+	for _, match := range matches {
+		s.SetLatestMatch(match)
+	}
+	return nil
+}
+
+type demoGoal struct {
+	minute    int
+	side      string
+	pokemonID int
+}
+
+func demoMatch(id string, teamA Team, teamB Team, start time.Time, goals []demoGoal) MatchResult {
+	events := []MatchEvent{
+		{Minute: 0, Type: "kickoff", Narrative: fmt.Sprintf("%s e %s entram em quadra para uma partida de teste.", teamA.Name, teamB.Name)},
+	}
+	for _, goal := range goals {
+		team := teamA
+		teamID := teamA.ID
+		if goal.side == "b" {
+			team = teamB
+			teamID = teamB.ID
+		}
+		events = append(events, MatchEvent{
+			Minute:    goal.minute,
+			Type:      "goal",
+			TeamID:    teamID,
+			PokemonID: goal.pokemonID,
+			Narrative: fmt.Sprintf("%s encontra espaco e marca para %s.", pokemonNameForEvent(MatchResult{TeamA: teamA, TeamB: teamB}, goal.pokemonID), team.Name),
+		})
+	}
+	events = append(events, MatchEvent{Minute: 40, Type: "fulltime", Narrative: "Fim de jogo no historico de demonstracao."})
+	match := MatchResult{ID: id, TeamA: teamA, TeamB: teamB, Events: events, StartTime: start, EndTime: start.Add(time.Hour)}
+	match.ScoreTeamA, match.ScoreTeamB = match.Score()
+	return match
 }
 
 func (s *SQLiteStore) Pokemon() []Pokemon {
 	rows, err := s.db.Query(`
-		SELECT id, name, type_1, COALESCE(type_2, ''), hp, attack, defense,
+		SELECT id, name, COALESCE(artwork_url, ''), COALESCE(local_artwork_url, ''), type_1, COALESCE(type_2, ''), hp, attack, defense,
 			special_attack, special_defense, speed, description, abilities
 		FROM pokemons
 		ORDER BY id`)
@@ -255,6 +392,49 @@ func (s *SQLiteStore) Pokemon() []Pokemon {
 
 func (s *SQLiteStore) CurrentUser() (User, bool) {
 	return s.findUser(demoUserID)
+}
+
+func (s *SQLiteStore) UserByID(id string) (User, bool) {
+	return s.findUser(id)
+}
+
+func (s *SQLiteStore) UpsertGoogleUser(profile GoogleProfile) (User, error) {
+	profile.DisplayName = strings.TrimSpace(profile.DisplayName)
+	profile.Email = strings.TrimSpace(profile.Email)
+	if profile.GoogleID == "" || profile.Email == "" {
+		return User{}, ErrInvalidAccount
+	}
+	if profile.DisplayName == "" {
+		profile.DisplayName = profile.Email
+	}
+
+	var id string
+	err := s.db.QueryRow("SELECT id FROM users WHERE google_id = ? AND deleted_at IS NULL", profile.GoogleID).Scan(&id)
+	switch {
+	case err == nil:
+		if _, err := s.db.Exec(
+			"UPDATE users SET display_name = ?, email = ?, picture_url = ? WHERE id = ?",
+			profile.DisplayName, profile.Email, profile.PictureURL, id,
+		); err != nil {
+			return User{}, err
+		}
+	case errors.Is(err, sql.ErrNoRows):
+		id = newID("user")
+		if _, err := s.db.Exec(
+			"INSERT INTO users (id, google_id, display_name, email, picture_url, role) VALUES (?, ?, ?, ?, ?, 'user')",
+			id, profile.GoogleID, profile.DisplayName, profile.Email, profile.PictureURL,
+		); err != nil {
+			return User{}, err
+		}
+	default:
+		return User{}, err
+	}
+
+	user, ok := s.findUser(id)
+	if !ok {
+		return User{}, ErrUserNotFound
+	}
+	return user, nil
 }
 
 func (s *SQLiteStore) UpdateAccount(input AccountInput) (User, error) {
@@ -286,8 +466,8 @@ func (s *SQLiteStore) UpdateAccount(input AccountInput) (User, error) {
 	}
 
 	if _, err := s.db.Exec(
-		"UPDATE users SET display_name = ?, gemini_api_key = ? WHERE id = ?",
-		input.DisplayName, nullString(apiKey), input.UserID,
+		"UPDATE users SET display_name = ?, avatar_icon = ?, gemini_api_key = ? WHERE id = ?",
+		input.DisplayName, normalizeAvatarIcon(input.AvatarIcon), nullString(apiKey), input.UserID,
 	); err != nil {
 		return User{}, err
 	}
@@ -301,10 +481,10 @@ func (s *SQLiteStore) UpdateAccount(input AccountInput) (User, error) {
 func (s *SQLiteStore) findUser(id string) (User, bool) {
 	var user User
 	err := s.db.QueryRow(`
-		SELECT id, google_id, display_name, email, COALESCE(gemini_api_key, ''), role
+		SELECT id, google_id, display_name, email, COALESCE(picture_url, ''), COALESCE(avatar_icon, 0), COALESCE(gemini_api_key, ''), role
 		FROM users
 		WHERE id = ? AND deleted_at IS NULL`, id).Scan(
-		&user.ID, &user.GoogleID, &user.DisplayName, &user.Email, &user.GeminiAPIKey, &user.Role,
+		&user.ID, &user.GoogleID, &user.DisplayName, &user.Email, &user.PictureURL, &user.AvatarIcon, &user.GeminiAPIKey, &user.Role,
 	)
 	if err != nil {
 		return User{}, false
@@ -313,12 +493,24 @@ func (s *SQLiteStore) findUser(id string) (User, bool) {
 	return user, true
 }
 
-func (s *SQLiteStore) MyTeams() []Team {
-	return s.teamsWhere("t.user_id = ?", "user-demo")
+func (s *SQLiteStore) MyTeams(userID string) []Team {
+	if userID == "" {
+		return nil
+	}
+	return s.teamsWhere("t.user_id = ?", userID)
 }
 
-func (s *SQLiteStore) GlobalTeams() []Team {
-	return s.teamsWhere("")
+func (s *SQLiteStore) RetiredTeams(userID string) []Team {
+	if userID == "" {
+		return nil
+	}
+	return s.teamsWhereWithDeleted(true, "t.user_id = ? AND t.deleted_at IS NOT NULL", userID)
+}
+
+func (s *SQLiteStore) GlobalTeams(sortBy string) []Team {
+	teams := s.teamsWhere("")
+	sortTeams(teams, sortBy)
+	return teams
 }
 
 func (s *SQLiteStore) Tournaments() []Tournament {
@@ -344,12 +536,108 @@ func (s *SQLiteStore) FindTeam(id string) (Team, bool) {
 	return s.findTeam(id, false)
 }
 
+func (s *SQLiteStore) FindTeamIncludingRetired(id string) (Team, bool) {
+	return s.findTeam(id, true)
+}
+
 func (s *SQLiteStore) findTeam(id string, includeDeleted bool) (Team, bool) {
 	teams := s.teamsWhereWithDeleted(includeDeleted, "t.id = ?", id)
 	if len(teams) == 0 {
 		return Team{}, false
 	}
 	return teams[0], true
+}
+
+func (s *SQLiteStore) TeamHistory(teamID string) []MatchSummary {
+	rows, err := s.db.Query(`
+		SELECT id, team_a_id, team_b_id, COALESCE(team_a_snapshot, '{}'), COALESCE(team_b_snapshot, '{}'), COALESCE(score_a, 0), COALESCE(score_b, 0), COALESCE(ended_at, '')
+		FROM matches
+		WHERE (team_a_id = ? OR team_b_id = ?)
+			AND COALESCE(ended_at, '') != ''
+			AND ended_at <= ?
+		ORDER BY ended_at DESC`,
+		teamID, teamID, formatTime(time.Now().UTC()),
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var summaries []MatchSummary
+	for rows.Next() {
+		var id, teamAID, teamBID, teamASnapshot, teamBSnapshot, endedAt string
+		var scoreA, scoreB int
+		if err := rows.Scan(&id, &teamAID, &teamBID, &teamASnapshot, &teamBSnapshot, &scoreA, &scoreB, &endedAt); err != nil {
+			return nil
+		}
+		teamA, okA := s.teamFromSnapshot(teamASnapshot, teamAID)
+		teamB, okB := s.teamFromSnapshot(teamBSnapshot, teamBID)
+		if !okA || !okB {
+			continue
+		}
+		match := MatchResult{
+			ID:         id,
+			TeamA:      teamA,
+			TeamB:      teamB,
+			ScoreTeamA: scoreA,
+			ScoreTeamB: scoreB,
+			EndTime:    parseTimeOrZero(endedAt),
+		}
+		if events, ok := s.matchEvents(id); ok {
+			match.Events = events
+		}
+		summaries = append(summaries, matchSummaryForTeam(match, teamID))
+	}
+	return summaries
+}
+
+func (s *SQLiteStore) TeamTransfers(teamID string) []TeamTransfer {
+	rows, err := s.db.Query(`
+		SELECT id, team_id, kind, COALESCE(before_snapshot, '{}'), COALESCE(after_snapshot, '{}'), summary, COALESCE(window_start, ''), created_at
+		FROM team_transactions
+		WHERE team_id = ?
+		ORDER BY created_at ASC`, teamID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var transfers []TeamTransfer
+	for rows.Next() {
+		var transfer TeamTransfer
+		var beforeSnapshot, afterSnapshot, windowStart, createdAt string
+		if err := rows.Scan(&transfer.ID, &transfer.TeamID, &transfer.Kind, &beforeSnapshot, &afterSnapshot, &transfer.Summary, &windowStart, &createdAt); err != nil {
+			return nil
+		}
+		transfer.Before = decodeTeamSnapshot(beforeSnapshot)
+		transfer.After = decodeTeamSnapshot(afterSnapshot)
+		transfer.WindowStart = parseTimeOrZero(windowStart)
+		transfer.CreatedAt = parseTimeOrZero(createdAt)
+		transfer.ChangedPlayers = changedPlayers(transfer.Before, transfer.After)
+		if transfer.Summary == "" {
+			transfer.Summary = transferSummary(transfer)
+		}
+		transfers = append(transfers, transfer)
+	}
+	return transfers
+}
+
+func (s *SQLiteStore) TransferWindow(teamID string) TransferWindow {
+	window := currentTransferWindow(time.Now())
+	var count int
+	_ = s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM team_transactions
+		WHERE team_id = ?
+			AND kind = 'pokemon_transfer'
+			AND window_start = ?`,
+		teamID, formatTime(window.Start),
+	).Scan(&count)
+	if count > 0 {
+		window.Used = true
+		window.Remaining = 0
+	}
+	return window
 }
 
 func (s *SQLiteStore) SaveTeam(input TeamInput) (Team, error) {
@@ -360,7 +648,9 @@ func (s *SQLiteStore) SaveTeam(input TeamInput) (Team, error) {
 	if input.Name == "" {
 		return Team{}, ErrInvalidTeam
 	}
-	if err := s.validatePokemonIDs(input); err != nil {
+	var err error
+	input, err = s.normalizeTeamInput(input)
+	if err != nil {
 		return Team{}, err
 	}
 
@@ -415,11 +705,13 @@ func (s *SQLiteStore) createTeam(input TeamInput) (Team, error) {
 	input.ID = newID("team")
 	_, err := s.db.Exec(`
 		INSERT INTO teams (
-			id, user_id, name, goalkeeper_id, fixo_id, ala_esquerda_id,
-			ala_direita_id, pivo_id, is_frozen, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-		input.ID, input.UserID, input.Name, input.GoalkeeperID, input.FixoID,
-		input.AlaEsquerdaID, input.AlaDireitaID, input.PivoID, formatTime(time.Now().UTC()),
+			id, user_id, name, goalkeeper_id, goalkeeper_ability, fixo_id, fixo_ability,
+			ala_esquerda_id, ala_esquerda_ability, ala_direita_id, ala_direita_ability,
+			pivo_id, pivo_ability, is_frozen, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+		input.ID, input.UserID, input.Name, input.GoalkeeperID, input.GoalkeeperAbility, input.FixoID, input.FixoAbility,
+		input.AlaEsquerdaID, input.AlaEsquerdaAbility, input.AlaDireitaID, input.AlaDireitaAbility,
+		input.PivoID, input.PivoAbility, formatTime(time.Now().UTC()),
 	)
 	if err != nil {
 		return Team{}, err
@@ -427,6 +719,9 @@ func (s *SQLiteStore) createTeam(input TeamInput) (Team, error) {
 	team, ok := s.FindTeam(input.ID)
 	if !ok {
 		return Team{}, ErrTeamNotFound
+	}
+	if err := s.recordTeamTransaction(Team{}, team, "formation_created", team.CreatedAt); err != nil {
+		return Team{}, err
 	}
 	return team, nil
 }
@@ -446,18 +741,37 @@ func (s *SQLiteStore) updateTeam(input TeamInput) (Team, error) {
 	if frozen == 1 {
 		return Team{}, ErrTeamFrozen
 	}
+	before, ok := s.FindTeam(input.ID)
+	if !ok {
+		return Team{}, ErrTeamNotFound
+	}
+	after, err := teamFromInput(input, pokemonMapByID(s.Pokemon()))
+	if err != nil {
+		return Team{}, err
+	}
+	after.CreatedAt = before.CreatedAt
+	pokemonChanged := teamPokemonChanged(before, after)
+	if pokemonChanged && s.TransferWindow(input.ID).Used {
+		return Team{}, ErrTransferLimit
+	}
 
 	result, err := s.db.Exec(`
 		UPDATE teams
 		SET name = ?,
 			goalkeeper_id = ?,
+			goalkeeper_ability = ?,
 			fixo_id = ?,
+			fixo_ability = ?,
 			ala_esquerda_id = ?,
+			ala_esquerda_ability = ?,
 			ala_direita_id = ?,
-			pivo_id = ?
+			ala_direita_ability = ?,
+			pivo_id = ?,
+			pivo_ability = ?
 		WHERE id = ? AND user_id = ?`,
-		input.Name, input.GoalkeeperID, input.FixoID, input.AlaEsquerdaID,
-		input.AlaDireitaID, input.PivoID, input.ID, input.UserID,
+		input.Name, input.GoalkeeperID, input.GoalkeeperAbility, input.FixoID, input.FixoAbility,
+		input.AlaEsquerdaID, input.AlaEsquerdaAbility, input.AlaDireitaID, input.AlaDireitaAbility,
+		input.PivoID, input.PivoAbility, input.ID, input.UserID,
 	)
 	if err != nil {
 		return Team{}, err
@@ -474,16 +788,81 @@ func (s *SQLiteStore) updateTeam(input TeamInput) (Team, error) {
 	if !ok {
 		return Team{}, ErrTeamNotFound
 	}
+	if pokemonChanged {
+		if err := s.recordTeamTransaction(before, team, "pokemon_transfer", time.Now()); err != nil {
+			return Team{}, err
+		}
+	}
 	return team, nil
 }
 
-func (s *SQLiteStore) validatePokemonIDs(input TeamInput) error {
-	ids := []int{input.GoalkeeperID, input.FixoID, input.AlaEsquerdaID, input.AlaDireitaID, input.PivoID}
-	for _, id := range ids {
-		var exists int
-		if err := s.db.QueryRow("SELECT 1 FROM pokemons WHERE id = ?", id).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
-			return ErrPokemonNotFound
-		} else if err != nil {
+func (s *SQLiteStore) normalizeTeamInput(input TeamInput) (TeamInput, error) {
+	return normalizeTeamInput(input, pokemonMapByID(s.Pokemon()))
+}
+
+func pokemonMapByID(pokemon []Pokemon) map[int]Pokemon {
+	pokemonByID := make(map[int]Pokemon, len(pokemon))
+	for _, item := range pokemon {
+		pokemonByID[item.ID] = item
+	}
+	return pokemonByID
+}
+
+func decodeTeamSnapshot(snapshot string) Team {
+	var team Team
+	_ = json.Unmarshal([]byte(snapshot), &team)
+	return team
+}
+
+func (s *SQLiteStore) recordTeamTransaction(before Team, after Team, kind string, at time.Time) error {
+	if after.ID == "" {
+		return nil
+	}
+	beforePayload := "{}"
+	if before.ID != "" {
+		payload, err := json.Marshal(before)
+		if err != nil {
+			return err
+		}
+		beforePayload = string(payload)
+	}
+	afterBytes, err := json.Marshal(after)
+	if err != nil {
+		return err
+	}
+	transfer := TeamTransfer{
+		TeamID:         after.ID,
+		Kind:           kind,
+		Before:         before,
+		After:          after,
+		WindowStart:    currentTransferWindow(at).Start,
+		CreatedAt:      at.UTC(),
+		ChangedPlayers: changedPlayers(before, after),
+	}
+	_, err = s.db.Exec(`
+		INSERT INTO team_transactions (
+			id, team_id, kind, before_snapshot, after_snapshot, summary, window_start, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		newID("transaction"), after.ID, kind, beforePayload, string(afterBytes), transferSummary(transfer),
+		formatTime(transfer.WindowStart), formatTime(transfer.CreatedAt),
+	)
+	return err
+}
+
+func (s *SQLiteStore) ensureInitialTeamTransactions() error {
+	teams := s.teamsWhereWithDeleted(true, "")
+	for _, team := range teams {
+		var count int
+		if err := s.db.QueryRow(
+			"SELECT COUNT(*) FROM team_transactions WHERE team_id = ? AND kind = 'formation_created'",
+			team.ID,
+		).Scan(&count); err != nil {
+			return err
+		}
+		if count > 0 {
+			continue
+		}
+		if err := s.recordTeamTransaction(Team{}, team, "formation_created", team.CreatedAt); err != nil {
 			return err
 		}
 	}
@@ -491,19 +870,31 @@ func (s *SQLiteStore) validatePokemonIDs(input TeamInput) error {
 }
 
 func (s *SQLiteStore) LatestMatch() (MatchResult, bool) {
-	var match MatchResult
-	var teamAID, teamBID, rawJSON, startTime string
-	err := s.db.QueryRow(`
-		SELECT id, team_a_id, team_b_id, score_a, score_b, raw_json_output, COALESCE(start_time, '')
+	return s.matchByQuery(`
+		SELECT id, team_a_id, team_b_id, COALESCE(team_a_snapshot, '{}'), COALESCE(team_b_snapshot, '{}'), score_a, score_b, raw_json_output, COALESCE(start_time, ''), COALESCE(ended_at, '')
 		FROM matches
 		ORDER BY created_at DESC
-		LIMIT 1`).Scan(&match.ID, &teamAID, &teamBID, &match.ScoreTeamA, &match.ScoreTeamB, &rawJSON, &startTime)
+		LIMIT 1`)
+}
+
+func (s *SQLiteStore) MatchByID(id string) (MatchResult, bool) {
+	return s.matchByQuery(`
+		SELECT id, team_a_id, team_b_id, COALESCE(team_a_snapshot, '{}'), COALESCE(team_b_snapshot, '{}'), score_a, score_b, raw_json_output, COALESCE(start_time, ''), COALESCE(ended_at, '')
+		FROM matches
+		WHERE id = ?
+		LIMIT 1`, id)
+}
+
+func (s *SQLiteStore) matchByQuery(query string, args ...any) (MatchResult, bool) {
+	var match MatchResult
+	var teamAID, teamBID, teamASnapshot, teamBSnapshot, rawJSON, startTime, endedAt string
+	err := s.db.QueryRow(query, args...).Scan(&match.ID, &teamAID, &teamBID, &teamASnapshot, &teamBSnapshot, &match.ScoreTeamA, &match.ScoreTeamB, &rawJSON, &startTime, &endedAt)
 	if err != nil {
 		return MatchResult{}, false
 	}
 
-	teamA, okA := s.findTeam(teamAID, true)
-	teamB, okB := s.findTeam(teamBID, true)
+	teamA, okA := s.teamFromSnapshot(teamASnapshot, teamAID)
+	teamB, okB := s.teamFromSnapshot(teamBSnapshot, teamBID)
 	if !okA || !okB {
 		return MatchResult{}, false
 	}
@@ -519,12 +910,39 @@ func (s *SQLiteStore) LatestMatch() (MatchResult, bool) {
 	if parsed, err := time.Parse(time.RFC3339Nano, startTime); err == nil {
 		match.StartTime = parsed
 	}
+	if parsed, err := time.Parse(time.RFC3339Nano, endedAt); err == nil {
+		match.EndTime = parsed
+	}
+	if match.EndTime.IsZero() && !match.StartTime.IsZero() {
+		match.EndTime = match.StartTime.Add(matchDuration(match.Events))
+	}
 	return match, true
+}
+
+func (s *SQLiteStore) teamFromSnapshot(snapshot string, fallbackID string) (Team, bool) {
+	var team Team
+	if snapshot != "" && snapshot != "{}" {
+		if err := json.Unmarshal([]byte(snapshot), &team); err == nil && team.ID != "" {
+			return team, true
+		}
+	}
+	return s.findTeam(fallbackID, true)
 }
 
 func (s *SQLiteStore) SetLatestMatch(match MatchResult) {
 	match.ScoreTeamA, match.ScoreTeamB = match.Score()
+	if match.EndTime.IsZero() {
+		match.EndTime = match.StartTime.Add(matchDuration(match.Events))
+	}
 	payload, err := json.Marshal(match)
+	if err != nil {
+		return
+	}
+	teamASnapshot, err := json.Marshal(match.TeamA)
+	if err != nil {
+		return
+	}
+	teamBSnapshot, err := json.Marshal(match.TeamB)
 	if err != nil {
 		return
 	}
@@ -536,11 +954,11 @@ func (s *SQLiteStore) SetLatestMatch(match MatchResult) {
 
 	if _, err := tx.Exec(`
 		INSERT INTO matches (
-			id, mode, team_a_id, team_b_id, score_a, score_b,
-			raw_json_output, start_time, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		match.ID, "duel_random", match.TeamA.ID, match.TeamB.ID, match.ScoreTeamA, match.ScoreTeamB,
-		string(payload), formatTime(match.StartTime), formatTime(time.Now().UTC()),
+			id, mode, team_a_id, team_b_id, team_a_snapshot, team_b_snapshot, score_a, score_b,
+			raw_json_output, start_time, ended_at, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		match.ID, "duel_random", match.TeamA.ID, match.TeamB.ID, string(teamASnapshot), string(teamBSnapshot), match.ScoreTeamA, match.ScoreTeamB,
+		string(payload), formatTime(match.StartTime), formatTime(match.EndTime), formatTime(time.Now().UTC()),
 	); err != nil {
 		return
 	}
@@ -636,12 +1054,13 @@ func (s *SQLiteStore) teamsWhereWithDeleted(includeDeleted bool, where string, a
 
 	query := `
 		SELECT
-			t.id, t.user_id, t.name, t.is_frozen, t.created_at,
-			g.id, g.name, g.type_1, COALESCE(g.type_2, ''), g.hp, g.attack, g.defense, g.special_attack, g.special_defense, g.speed, g.description, g.abilities,
-			f.id, f.name, f.type_1, COALESCE(f.type_2, ''), f.hp, f.attack, f.defense, f.special_attack, f.special_defense, f.speed, f.description, f.abilities,
-			ae.id, ae.name, ae.type_1, COALESCE(ae.type_2, ''), ae.hp, ae.attack, ae.defense, ae.special_attack, ae.special_defense, ae.speed, ae.description, ae.abilities,
-			ad.id, ad.name, ad.type_1, COALESCE(ad.type_2, ''), ad.hp, ad.attack, ad.defense, ad.special_attack, ad.special_defense, ad.speed, ad.description, ad.abilities,
-			p.id, p.name, p.type_1, COALESCE(p.type_2, ''), p.hp, p.attack, p.defense, p.special_attack, p.special_defense, p.speed, p.description, p.abilities
+			t.id, t.user_id, t.name, t.is_frozen, t.created_at, COALESCE(t.deleted_at, ''),
+			COALESCE(t.goalkeeper_ability, ''), COALESCE(t.fixo_ability, ''), COALESCE(t.ala_esquerda_ability, ''), COALESCE(t.ala_direita_ability, ''), COALESCE(t.pivo_ability, ''),
+			g.id, g.name, COALESCE(g.artwork_url, ''), COALESCE(g.local_artwork_url, ''), g.type_1, COALESCE(g.type_2, ''), g.hp, g.attack, g.defense, g.special_attack, g.special_defense, g.speed, g.description, g.abilities,
+			f.id, f.name, COALESCE(f.artwork_url, ''), COALESCE(f.local_artwork_url, ''), f.type_1, COALESCE(f.type_2, ''), f.hp, f.attack, f.defense, f.special_attack, f.special_defense, f.speed, f.description, f.abilities,
+			ae.id, ae.name, COALESCE(ae.artwork_url, ''), COALESCE(ae.local_artwork_url, ''), ae.type_1, COALESCE(ae.type_2, ''), ae.hp, ae.attack, ae.defense, ae.special_attack, ae.special_defense, ae.speed, ae.description, ae.abilities,
+			ad.id, ad.name, COALESCE(ad.artwork_url, ''), COALESCE(ad.local_artwork_url, ''), ad.type_1, COALESCE(ad.type_2, ''), ad.hp, ad.attack, ad.defense, ad.special_attack, ad.special_defense, ad.speed, ad.description, ad.abilities,
+			p.id, p.name, COALESCE(p.artwork_url, ''), COALESCE(p.local_artwork_url, ''), p.type_1, COALESCE(p.type_2, ''), p.hp, p.attack, p.defense, p.special_attack, p.special_defense, p.speed, p.description, p.abilities
 		FROM teams t
 		JOIN pokemons g ON g.id = t.goalkeeper_id
 		JOIN pokemons f ON f.id = t.fixo_id
@@ -665,7 +1084,51 @@ func (s *SQLiteStore) teamsWhereWithDeleted(includeDeleted bool, where string, a
 		}
 		teams = append(teams, team)
 	}
+	s.attachTeamRecords(teams)
 	return teams
+}
+
+func (s *SQLiteStore) attachTeamRecords(teams []Team) {
+	for i := range teams {
+		teams[i].Record = s.teamRecord(teams[i].ID)
+		teams[i].LeaderboardScore = leaderboardScore(teams[i].Record)
+	}
+}
+
+func (s *SQLiteStore) teamRecord(teamID string) TeamRecord {
+	rows, err := s.db.Query(`
+		SELECT team_a_id, team_b_id, COALESCE(score_a, 0), COALESCE(score_b, 0)
+		FROM matches
+		WHERE (team_a_id = ? OR team_b_id = ?)
+			AND COALESCE(ended_at, '') != ''
+			AND ended_at <= ?`,
+		teamID, teamID, formatTime(time.Now().UTC()),
+	)
+	if err != nil {
+		return TeamRecord{}
+	}
+	defer rows.Close()
+
+	var record TeamRecord
+	for rows.Next() {
+		var teamAID, teamBID string
+		var scoreA, scoreB int
+		if err := rows.Scan(&teamAID, &teamBID, &scoreA, &scoreB); err != nil {
+			return TeamRecord{}
+		}
+		record.Played++
+		switch {
+		case scoreA == scoreB:
+			record.Draws++
+		case teamID == teamAID && scoreA > scoreB:
+			record.Wins++
+		case teamID == teamBID && scoreB > scoreA:
+			record.Wins++
+		default:
+			record.Losses++
+		}
+	}
+	return record
 }
 
 type pokemonScanner interface {
@@ -675,29 +1138,37 @@ type pokemonScanner interface {
 func scanPokemon(scanner pokemonScanner) (Pokemon, error) {
 	var pokemon Pokemon
 	err := scanner.Scan(
-		&pokemon.ID, &pokemon.Name, &pokemon.Type1, &pokemon.Type2, &pokemon.HP,
+		&pokemon.ID, &pokemon.Name, &pokemon.ArtworkURL, &pokemon.LocalArtworkURL, &pokemon.Type1, &pokemon.Type2, &pokemon.HP,
 		&pokemon.Attack, &pokemon.Defense, &pokemon.SpecialAttack,
 		&pokemon.SpecialDefense, &pokemon.Speed, &pokemon.Description, &pokemon.Abilities,
 	)
-	return pokemon, err
+	return ensurePokemonArtwork(pokemon), err
 }
 
 func scanTeam(rows *sql.Rows) (Team, error) {
 	var team Team
 	var frozen int
 	var createdAt string
+	var deletedAt string
 	err := rows.Scan(
-		&team.ID, &team.UserID, &team.Name, &frozen, &createdAt,
-		&team.Goalkeeper.ID, &team.Goalkeeper.Name, &team.Goalkeeper.Type1, &team.Goalkeeper.Type2, &team.Goalkeeper.HP, &team.Goalkeeper.Attack, &team.Goalkeeper.Defense, &team.Goalkeeper.SpecialAttack, &team.Goalkeeper.SpecialDefense, &team.Goalkeeper.Speed, &team.Goalkeeper.Description, &team.Goalkeeper.Abilities,
-		&team.Fixo.ID, &team.Fixo.Name, &team.Fixo.Type1, &team.Fixo.Type2, &team.Fixo.HP, &team.Fixo.Attack, &team.Fixo.Defense, &team.Fixo.SpecialAttack, &team.Fixo.SpecialDefense, &team.Fixo.Speed, &team.Fixo.Description, &team.Fixo.Abilities,
-		&team.AlaEsquerda.ID, &team.AlaEsquerda.Name, &team.AlaEsquerda.Type1, &team.AlaEsquerda.Type2, &team.AlaEsquerda.HP, &team.AlaEsquerda.Attack, &team.AlaEsquerda.Defense, &team.AlaEsquerda.SpecialAttack, &team.AlaEsquerda.SpecialDefense, &team.AlaEsquerda.Speed, &team.AlaEsquerda.Description, &team.AlaEsquerda.Abilities,
-		&team.AlaDireita.ID, &team.AlaDireita.Name, &team.AlaDireita.Type1, &team.AlaDireita.Type2, &team.AlaDireita.HP, &team.AlaDireita.Attack, &team.AlaDireita.Defense, &team.AlaDireita.SpecialAttack, &team.AlaDireita.SpecialDefense, &team.AlaDireita.Speed, &team.AlaDireita.Description, &team.AlaDireita.Abilities,
-		&team.Pivo.ID, &team.Pivo.Name, &team.Pivo.Type1, &team.Pivo.Type2, &team.Pivo.HP, &team.Pivo.Attack, &team.Pivo.Defense, &team.Pivo.SpecialAttack, &team.Pivo.SpecialDefense, &team.Pivo.Speed, &team.Pivo.Description, &team.Pivo.Abilities,
+		&team.ID, &team.UserID, &team.Name, &frozen, &createdAt, &deletedAt,
+		&team.GoalkeeperAbility, &team.FixoAbility, &team.AlaEsquerdaAbility, &team.AlaDireitaAbility, &team.PivoAbility,
+		&team.Goalkeeper.ID, &team.Goalkeeper.Name, &team.Goalkeeper.ArtworkURL, &team.Goalkeeper.LocalArtworkURL, &team.Goalkeeper.Type1, &team.Goalkeeper.Type2, &team.Goalkeeper.HP, &team.Goalkeeper.Attack, &team.Goalkeeper.Defense, &team.Goalkeeper.SpecialAttack, &team.Goalkeeper.SpecialDefense, &team.Goalkeeper.Speed, &team.Goalkeeper.Description, &team.Goalkeeper.Abilities,
+		&team.Fixo.ID, &team.Fixo.Name, &team.Fixo.ArtworkURL, &team.Fixo.LocalArtworkURL, &team.Fixo.Type1, &team.Fixo.Type2, &team.Fixo.HP, &team.Fixo.Attack, &team.Fixo.Defense, &team.Fixo.SpecialAttack, &team.Fixo.SpecialDefense, &team.Fixo.Speed, &team.Fixo.Description, &team.Fixo.Abilities,
+		&team.AlaEsquerda.ID, &team.AlaEsquerda.Name, &team.AlaEsquerda.ArtworkURL, &team.AlaEsquerda.LocalArtworkURL, &team.AlaEsquerda.Type1, &team.AlaEsquerda.Type2, &team.AlaEsquerda.HP, &team.AlaEsquerda.Attack, &team.AlaEsquerda.Defense, &team.AlaEsquerda.SpecialAttack, &team.AlaEsquerda.SpecialDefense, &team.AlaEsquerda.Speed, &team.AlaEsquerda.Description, &team.AlaEsquerda.Abilities,
+		&team.AlaDireita.ID, &team.AlaDireita.Name, &team.AlaDireita.ArtworkURL, &team.AlaDireita.LocalArtworkURL, &team.AlaDireita.Type1, &team.AlaDireita.Type2, &team.AlaDireita.HP, &team.AlaDireita.Attack, &team.AlaDireita.Defense, &team.AlaDireita.SpecialAttack, &team.AlaDireita.SpecialDefense, &team.AlaDireita.Speed, &team.AlaDireita.Description, &team.AlaDireita.Abilities,
+		&team.Pivo.ID, &team.Pivo.Name, &team.Pivo.ArtworkURL, &team.Pivo.LocalArtworkURL, &team.Pivo.Type1, &team.Pivo.Type2, &team.Pivo.HP, &team.Pivo.Attack, &team.Pivo.Defense, &team.Pivo.SpecialAttack, &team.Pivo.SpecialDefense, &team.Pivo.Speed, &team.Pivo.Description, &team.Pivo.Abilities,
 	)
 	if err != nil {
 		return Team{}, err
 	}
+	team.Goalkeeper = ensurePokemonArtwork(team.Goalkeeper)
+	team.Fixo = ensurePokemonArtwork(team.Fixo)
+	team.AlaEsquerda = ensurePokemonArtwork(team.AlaEsquerda)
+	team.AlaDireita = ensurePokemonArtwork(team.AlaDireita)
+	team.Pivo = ensurePokemonArtwork(team.Pivo)
 	team.IsFrozen = frozen == 1
+	team.IsRetired = deletedAt != ""
 	if parsed, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 		team.CreatedAt = parsed
 	}
@@ -729,12 +1200,25 @@ func formatTime(value time.Time) string {
 	return value.UTC().Format(time.RFC3339Nano)
 }
 
+func parseTimeOrZero(value string) time.Time {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
+}
+
 func countRows(db *sql.DB, table string) (int, error) {
 	var count int
 	if err := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", table)).Scan(&count); err != nil {
 		return 0, err
 	}
 	return count, nil
+}
+
+func (s *SQLiteStore) backfillPokemonArtworkURLs() error {
+	_, err := s.db.Exec("UPDATE pokemons SET artwork_url = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/' || id || '.png' WHERE artwork_url IS NULL OR artwork_url = ''")
+	return err
 }
 
 func (s *SQLiteStore) ensureColumn(table string, column string, definition string) error {
