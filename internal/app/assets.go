@@ -669,6 +669,33 @@ const appJS = `
     });
   }
 
+  function duelFormFor(el) {
+    return el?.closest?.("[data-duel-form]");
+  }
+
+  function setDuelLoading(form, loading) {
+    if (!form) return;
+    form.classList.toggle("is-loading", loading);
+    form.querySelectorAll("button, select, input").forEach((control) => {
+      control.toggleAttribute("disabled", loading);
+    });
+  }
+
+  function showDuelError(form, message) {
+    const errorEl = form?.querySelector("[data-duel-error]");
+    if (!errorEl) return;
+    const text = String(message || "").trim() || "Nao foi possivel gerar a partida.";
+    errorEl.textContent = text;
+    errorEl.classList.remove("hidden");
+  }
+
+  function clearDuelError(form) {
+    const errorEl = form?.querySelector("[data-duel-error]");
+    if (!errorEl) return;
+    errorEl.textContent = "";
+    errorEl.classList.add("hidden");
+  }
+
   function hydrate(root = document) {
     hydrateMatchPlayers(root);
     hydratePokemonPickers(root);
@@ -683,6 +710,23 @@ const appJS = `
     document.querySelectorAll("[data-broadcast-state]").forEach((panel) => syncMatch(panel, true));
   });
   document.body.addEventListener("htmx:afterSwap", (event) => hydrate(event.target));
+  document.body.addEventListener("htmx:beforeRequest", (event) => {
+    const form = duelFormFor(event.target);
+    if (!form) return;
+    clearDuelError(form);
+    setDuelLoading(form, true);
+  });
+  document.body.addEventListener("htmx:afterRequest", (event) => {
+    const form = duelFormFor(event.target);
+    if (!form) return;
+    setDuelLoading(form, false);
+  });
+  document.body.addEventListener("htmx:responseError", (event) => {
+    const form = duelFormFor(event.target);
+    if (!form) return;
+    setDuelLoading(form, false);
+    showDuelError(form, event.detail?.xhr?.responseText);
+  });
 })();
 `
 

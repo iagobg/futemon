@@ -1,0 +1,28 @@
+FROM golang:1.22-bookworm AS build
+
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=1 GOOS=linux go build -o /out/futemon ./cmd/server
+
+FROM debian:bookworm-slim
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /out/futemon /app/futemon
+COPY examples /app/examples
+COPY data /app/data
+
+ENV PORT=8080
+ENV FUTEMON_DB_PATH=/app/data/futemon.db
+ENV FUTEMON_ARTWORK_DIR=/app/data/pokemon-artwork
+ENV FUTEMON_AUTH_MODE=local
+
+EXPOSE 8080
+VOLUME ["/app/data"]
+
+CMD ["/app/futemon", "-auth-mode", "local"]

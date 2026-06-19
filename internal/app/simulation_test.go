@@ -63,3 +63,33 @@ func TestLoadSimulationPayloadFromDefaultFile(t *testing.T) {
 		t.Fatalf("first sample minute = %d, want 0", payload.Events[0].Minute)
 	}
 }
+
+func TestParseSimulationPayloadMergesBuildUpAndResolution(t *testing.T) {
+	payload, err := ParseSimulationPayload([]byte(`{
+		"events": [
+			{"minute": 0, "type": "kickoff", "team_ref": null, "pokemon_ref": null, "narrative_build_up": "A bola espera no centro.", "narrative_resolution": "Comeca o jogo."},
+			{"minute": 20, "type": "halftime", "team_ref": null, "pokemon_ref": null, "narrative_build_up": "O relogio chega aos 20.", "narrative_resolution": "Intervalo."},
+			{"minute": 40, "type": "fulltime", "team_ref": null, "pokemon_ref": null, "narrative_build_up": "Ultimo apito armado.", "narrative_resolution": "Fim de jogo."}
+		],
+		"consequences": []
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Events[0].Narrative; got != "A bola espera no centro. Comeca o jogo." {
+		t.Fatalf("merged narrative = %q", got)
+	}
+}
+
+func TestParseSimulationPayloadRejectsMissingRequiredEvents(t *testing.T) {
+	_, err := ParseSimulationPayload([]byte(`{
+		"events": [
+			{"minute": 0, "type": "kickoff", "narrative": "Comeca."},
+			{"minute": 40, "type": "fulltime", "narrative": "Fim."}
+		],
+		"consequences": []
+	}`))
+	if err == nil {
+		t.Fatal("expected missing halftime error")
+	}
+}

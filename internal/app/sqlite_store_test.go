@@ -542,6 +542,13 @@ func TestSQLiteStoreUpdatesAccountAndEncryptsAPIKey(t *testing.T) {
 	if decrypted != "gemini-secret" {
 		t.Fatalf("decrypted key = %q", decrypted)
 	}
+	apiKey, ok, err := store.UserAPIKey(demoUserID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || apiKey != "gemini-secret" {
+		t.Fatalf("user api key = %q, ok %v", apiKey, ok)
+	}
 }
 
 func TestSQLiteStoreRejectsAPIKeyWithoutCipher(t *testing.T) {

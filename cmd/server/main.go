@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -12,13 +13,20 @@ func main() {
 	if err := app.LoadDotEnv(".env"); err != nil {
 		log.Fatalf("load .env: %v", err)
 	}
+	authMode := flag.String("auth-mode", os.Getenv("FUTEMON_AUTH_MODE"), "authentication mode: google or local")
+	portFlag := flag.String("port", os.Getenv("PORT"), "HTTP port")
+	dbFlag := flag.String("db", os.Getenv("FUTEMON_DB_PATH"), "SQLite database path")
+	flag.Parse()
+	if *authMode != "" {
+		_ = os.Setenv("FUTEMON_AUTH_MODE", *authMode)
+	}
 
 	addr := ":8080"
-	if port := os.Getenv("PORT"); port != "" {
+	if port := *portFlag; port != "" {
 		addr = ":" + port
 	}
 
-	dbPath := os.Getenv("FUTEMON_DB_PATH")
+	dbPath := *dbFlag
 	if dbPath == "" {
 		dbPath = "futemon.db"
 	}

@@ -129,6 +129,9 @@ func clearCookie(w http.ResponseWriter, name string) {
 }
 
 func (s *Server) currentUser(r *http.Request) (User, bool) {
+	if s.authMode == "local" {
+		return s.store.CurrentUser()
+	}
 	if cookie, err := r.Cookie(sessionCookieName); err == nil {
 		if userID, ok := s.verifySession(cookie.Value); ok {
 			if user, ok := s.store.UserByID(userID); ok {
@@ -140,6 +143,10 @@ func (s *Server) currentUser(r *http.Request) (User, bool) {
 }
 
 func (s *Server) handleGoogleLogin(w http.ResponseWriter, r *http.Request) {
+	if s.authMode == "local" {
+		http.Redirect(w, r, "/teams", http.StatusSeeOther)
+		return
+	}
 	if !s.googleOAuth.configured(r) {
 		http.Error(w, "Google OAuth nao configurado", http.StatusServiceUnavailable)
 		return
@@ -156,6 +163,10 @@ func (s *Server) handleGoogleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
+	if s.authMode == "local" {
+		http.Redirect(w, r, "/teams", http.StatusSeeOther)
+		return
+	}
 	stateCookie, err := r.Cookie(oauthStateCookieName)
 	if err != nil || stateCookie.Value == "" || stateCookie.Value != r.URL.Query().Get("state") {
 		http.Error(w, "estado OAuth invalido", http.StatusBadRequest)
@@ -182,6 +193,10 @@ func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if s.authMode == "local" {
+		http.Redirect(w, r, "/teams", http.StatusSeeOther)
+		return
+	}
 	clearCookie(w, sessionCookieName)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

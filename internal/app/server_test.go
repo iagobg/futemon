@@ -258,6 +258,20 @@ func TestProtectedTeamsRedirectsWithoutSession(t *testing.T) {
 	}
 }
 
+func TestLocalAuthModeAllowsAccessWithoutSession(t *testing.T) {
+	t.Setenv("FUTEMON_AUTH_MODE", "local")
+	server := NewServer(NewMemoryStore())
+
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/teams", nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET /teams in local auth mode = %d", res.Code)
+	}
+	if !strings.Contains(res.Body.String(), "Treinador Demo") {
+		t.Fatalf("local auth page did not render demo user: %s", res.Body.String())
+	}
+}
+
 func TestHeaderHidesAdminForNonAdminUser(t *testing.T) {
 	store := NewMemoryStore()
 	store.user.Role = "user"
@@ -275,10 +289,32 @@ func TestHeaderHidesAdminForNonAdminUser(t *testing.T) {
 	}
 }
 
+func TestDuelsPageRendersLoadingFeedback(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	defer store.Close()
+	server := NewServer(store)
+
+	req := httptest.NewRequest(http.MethodGet, "/duels", nil)
+	addSession(t, server, req, demoUserID)
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET /duels status = %d", res.Code)
+	}
+	body := res.Body.String()
+	for _, want := range []string{"data-duel-form", "data-duel-loading", "Aguardando o narrador montar a partida", "data-duel-error"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("duels page missing %q: %s", want, body)
+		}
+	}
+}
+
 func TestStartDuelRedirectsToDynamicMatchRoute(t *testing.T) {
 	store := newTestSQLiteStore(t)
 	defer store.Close()
 	server := NewServer(store)
+	server.matchGenerator = LocalMatchGenerator{}
 
 	form := url.Values{
 		"team_id":     {"team-kanto-press"},
@@ -302,6 +338,61 @@ func TestStartDuelRedirectsToDynamicMatchRoute(t *testing.T) {
 	}
 	if !strings.Contains(matchPage.Body.String(), "data-sync-url=\""+location+"/sync\"") {
 		t.Fatalf("dynamic match page missing scoped sync url: %s", matchPage.Body.String())
+	}
+}
+
+func TestStartDuelAppliesDailyLimitWithoutBYOK(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	defer store.Close()
+	server := NewServer(store)
+	server.matchGenerator = LocalMatchGenerator{}
+
+	form := url.Values{
+		"team_id":     {"team-kanto-press"},
+		"opponent_id": {"team-paleta-bolada"},
+	}
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/duels/start", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		addSession(t, server, req, demoUserID)
+		res := httptest.NewRecorder()
+		server.Routes().ServeHTTP(res, req)
+		if i == 0 && res.Code != http.StatusNoContent {
+			t.Fatalf("first duel status = %d", res.Code)
+		}
+		if i == 1 && res.Code != http.StatusTooManyRequests {
+			t.Fatalf("second duel status = %d, want 429", res.Code)
+		}
+	}
+}
+
+func TestStartDuelBypassesDailyLimitWithBYOK(t *testing.T) {
+	store := NewMemoryStore()
+	store.user.GeminiAPIKey = "user-openrouter-key"
+	store.user.HasGeminiAPIKey = true
+	server := NewServer(store)
+	var usedKey string
+	server.byokGenerator = func(apiKey string) MatchGenerator {
+		usedKey = apiKey
+		return LocalMatchGenerator{}
+	}
+
+	form := url.Values{
+		"team_id":     {"team-kanto-press"},
+		"opponent_id": {"team-paleta-bolada"},
+	}
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/duels/start", strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		addSession(t, server, req, demoUserID)
+		res := httptest.NewRecorder()
+		server.Routes().ServeHTTP(res, req)
+		if res.Code != http.StatusNoContent {
+			t.Fatalf("duel %d status = %d", i+1, res.Code)
+		}
+	}
+	if usedKey != "user-openrouter-key" {
+		t.Fatalf("BYOK key = %q", usedKey)
 	}
 }
 

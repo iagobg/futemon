@@ -1,49 +1,157 @@
 # Futemon
 
-Futemon is a server-rendered web app for semi-comic futsal matches between teams of five Pokemon.
+Futemon is a server-rendered Go web app for futsal matches between Pokemon teams, with HTMX interactions, SQLite persistence, and LLM-generated match narration through OpenRouter.
 
-This first slice is intentionally small:
+## Quick Start
 
-- Go `net/http` server
-- Server-rendered HTML templates
-- HTMX for partial updates
-- Tailwind CDN for fast UI iteration
-- SQLite persistence with demo seed data
-- Deterministic simulation placeholders
-
-## Run
+Create a `.env` file:
 
 ```sh
-go run ./cmd/server
+cp .env.example .env
 ```
 
-Then open `http://localhost:8080`.
+For the simplest internal setup, keep auth in local mode and add your OpenRouter key:
 
-The server creates `futemon.db` in the working directory. Override it with:
-
-```sh
-FUTEMON_DB_PATH=/tmp/futemon.db go run ./cmd/server
+```env
+FUTEMON_AUTH_MODE=local
+OPENROUTER_API_KEY=sk-or-...
+ENV_ENCRYPTION_KEY=12345678901234567890123456789012
+SESSION_SECRET=change-this-long-random-string
 ```
 
-To save Gemini BYOK credentials, configure a 32-byte encryption key:
+Run:
 
 ```sh
-ENV_ENCRYPTION_KEY=12345678901234567890123456789012 go run ./cmd/server
+go run ./cmd/server -auth-mode local
 ```
 
-The development simulator reads `examples/sample_match.json` by default. Override it with:
+Open `http://localhost:8080`.
+
+In local auth mode the app uses the seeded demo user and does not require Google OAuth. This is intended for trusted/internal deployments.
+
+## Docker
+
+Build:
 
 ```sh
-FUTEMON_SAMPLE_MATCH_JSON=/path/to/match.json go run ./cmd/server
+docker build -t futemon .
 ```
 
-To enable Google OAuth login, create OAuth credentials in Google Cloud and set:
+Run with an env file and persistent data volume:
 
 ```sh
+docker run --rm \
+  --env-file .env \
+  -p 8080:8080 \
+  -v futemon-data:/app/data \
+  futemon
+```
+
+The Docker image defaults to `FUTEMON_AUTH_MODE=local` and stores SQLite data at `/app/data/futemon.db`.
+
+## Server Flags
+
+```sh
+go run ./cmd/server -auth-mode local -port 8080 -db futemon.db
+```
+
+Flags:
+
+- `-auth-mode`: `local` or `google`.
+- `-port`: HTTP port.
+- `-db`: SQLite database path.
+
+Environment variables still work and are used as defaults for these flags.
+
+## Auth Modes
+
+### Local
+
+```env
+FUTEMON_AUTH_MODE=local
+```
+
+- No Google OAuth.
+- Uses the seeded demo user.
+- Best for local/internal use.
+- Daily duel limit defaults to disabled (`0`) in this mode.
+
+### Google
+
+```env
+FUTEMON_AUTH_MODE=google
 GOOGLE_CLIENT_ID=...
 GOOGLE_CLIENT_SECRET=...
 GOOGLE_REDIRECT_URL=http://localhost:8080/auth/google/callback
 SESSION_SECRET=change-this-long-random-string
+```
+
+Google mode is the default when `FUTEMON_AUTH_MODE` is absent.
+
+## LLM And OpenRouter
+
+Default model:
+
+```env
+OPENROUTER_MODEL=openai/gpt-oss-120b:free
+```
+
+Useful options:
+
+```env
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_TIMEOUT_SECONDS=120
+FUTEMON_LLM_PROMPT_PATH=examples/systemprompt.md
+FUTEMON_LLM_DISABLED=0
+FUTEMON_LLM_FALLBACK_ON_ERROR=0
+FUTEMON_LLM_STRICT_SCHEMA=0
+```
+
+Notes:
+
+- If `OPENROUTER_API_KEY` is absent, the app uses the local sample simulation.
+- If `FUTEMON_LLM_FALLBACK_ON_ERROR=1`, LLM failures fall back to the sample simulation.
+- By default, LLM failures are returned as errors so they can be diagnosed from server logs.
+- `FUTEMON_LLM_STRICT_SCHEMA=1` sends `response_format: json_schema`; leave it off if the selected model/provider rejects strict structured output.
+
+## Rate Limit And BYOK
+
+```env
+FUTEMON_DAILY_DUEL_LIMIT=1
+```
+
+- In Google mode, users default to 1 completed duel per day.
+- In local mode, the default is `0`, meaning no local daily limit.
+- Users can save their own OpenRouter key in account settings. When present, that BYOK key is used for duel generation and bypasses the local daily limit.
+- Saved API keys require `ENV_ENCRYPTION_KEY` to be exactly 32 bytes.
+
+## Data And Seeding
+
+The server creates and migrates the SQLite database automatically.
+
+To run the migration command manually:
+
+```sh
+go run ./cmd/migrate --db futemon.db
+```
+
+Fetch Pokemon data and official artwork:
+
+```sh
+go run ./cmd/migrate --db futemon.db --seed-pokemon --pokemon-limit 151
+```
+
+Artwork is served from:
+
+```env
+FUTEMON_ARTWORK_DIR=data/pokemon-artwork
+```
+
+The local sample simulation can be overridden:
+
+```env
+FUTEMON_SAMPLE_MATCH_JSON=examples/sample_match.json
 ```
 
 ## Test
@@ -51,27 +159,3 @@ SESSION_SECRET=change-this-long-random-string
 ```sh
 go test ./...
 ```
-
-## Migrate And Seed
-
-Apply migrations and demo seed data:
-
-```sh
-go run ./cmd/migrate --db futemon.db
-```
-
-Fetch Pokemon data from PokeAPI into the local cache. This also mirrors official artwork PNGs into `data/pokemon-artwork` and stores `/static/pokemon-artwork/{id}.png` as the preferred image URL:
-
-```sh
-go run ./cmd/migrate --db futemon.db --seed-pokemon --pokemon-limit 151
-```
-
-Override the artwork directory with `FUTEMON_ARTWORK_DIR` or `--artwork-dir` when seeding. The server also reads `FUTEMON_ARTWORK_DIR` and serves `/static/pokemon-artwork/*` with a long immutable cache header.
-
-## Product Roadmap
-
-1. Add create/edit/delete team flows backed by SQLite.
-2. Expand synchronized broadcast timing from `start_time`.
-3. Add Google OAuth2 sessions and role-based admin middleware.
-4. Replace deterministic simulation with Gemini structured-output generation.
-5. Add tournament bracket generation and consequence logs.

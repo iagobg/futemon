@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"html/template"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,11 +20,15 @@ const trainerIconRows = 32
 const defaultTrainerIconSheetPath = "data/icons/pngkey.com-3ds-png-2672768.png"
 
 type Server struct {
-	store       Store
-	templates   *template.Template
-	sessionKey  []byte
-	googleOAuth GoogleOAuthConfig
-	artworkDir  string
+	store          Store
+	matchGenerator MatchGenerator
+	byokGenerator  func(apiKey string) MatchGenerator
+	duelLimiter    *DailyDuelLimiter
+	authMode       string
+	templates      *template.Template
+	sessionKey     []byte
+	googleOAuth    GoogleOAuthConfig
+	artworkDir     string
 }
 
 func NewServer(store Store) *Server {
@@ -31,11 +37,16 @@ func NewServer(store Store) *Server {
 	if artworkDir == "" {
 		artworkDir = DefaultPokemonArtworkDir
 	}
+	authMode := normalizeAuthMode(os.Getenv("FUTEMON_AUTH_MODE"))
 	return &Server{
-		store:       store,
-		sessionKey:  sessionKey,
-		googleOAuth: loadGoogleOAuthConfig(),
-		artworkDir:  artworkDir,
+		store:          store,
+		matchGenerator: NewMatchGeneratorFromEnv(),
+		byokGenerator:  func(apiKey string) MatchGenerator { return NewOpenRouterMatchGeneratorFromEnv(apiKey) },
+		duelLimiter:    NewDailyDuelLimiter(dailyDuelLimitFromEnv(authMode)),
+		authMode:       authMode,
+		sessionKey:     sessionKey,
+		googleOAuth:    loadGoogleOAuthConfig(),
+		artworkDir:     artworkDir,
 		templates: template.Must(template.New("app").Funcs(template.FuncMap{
 			"dict":                 dict,
 			"formatShortTime":      formatShortTime,
@@ -243,10 +254,101 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	match := SimulateMatch(teamA, teamB)
+	userAPIKey, hasUserAPIKey, err := s.store.UserAPIKey(user.ID)
+	if err != nil {
+		log.Printf("load user API key failed: user=%s error=%v", user.ID, err)
+		http.Error(w, "Nao foi possivel ler a chave BYOK da conta.", http.StatusInternalServerError)
+		return
+	}
+	if !hasUserAPIKey && !s.duelLimiter.CanUse(user.ID, time.Now()) {
+		http.Error(w, "Limite diario de duelos atingido. Configure uma chave OpenRouter na conta para usar BYOK.", http.StatusTooManyRequests)
+		return
+	}
+
+	generator := s.matchGenerator
+	if hasUserAPIKey {
+		generator = s.byokGenerator(userAPIKey)
+	}
+	match, err := generator.GenerateMatch(r.Context(), teamA, teamB)
+	if err != nil {
+		log.Printf("generate duel failed: team_a=%s team_b=%s error=%v", teamA.ID, teamB.ID, err)
+		http.Error(w, "Nao foi possivel gerar a partida pela API. Veja o log do servidor para o erro exato.", http.StatusBadGateway)
+		return
+	}
+	if !hasUserAPIKey {
+		s.duelLimiter.Record(user.ID, time.Now())
+	}
 	s.store.SetLatestMatch(match)
 	w.Header().Set("HX-Redirect", "/match/"+match.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type DailyDuelLimiter struct {
+	mu     sync.Mutex
+	limit  int
+	counts map[string]dailyDuelCount
+}
+
+type dailyDuelCount struct {
+	Date  string
+	Count int
+}
+
+func NewDailyDuelLimiter(limit int) *DailyDuelLimiter {
+	return &DailyDuelLimiter{limit: limit, counts: make(map[string]dailyDuelCount)}
+}
+
+func (l *DailyDuelLimiter) CanUse(userID string, now time.Time) bool {
+	if l == nil || l.limit <= 0 {
+		return true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	counter := l.counter(userID, now)
+	return counter.Count < l.limit
+}
+
+func (l *DailyDuelLimiter) Record(userID string, now time.Time) {
+	if l == nil || l.limit <= 0 {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	counter := l.counter(userID, now)
+	counter.Count++
+	l.counts[userID] = counter
+}
+
+func normalizeAuthMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "local", "none", "noauth", "disabled":
+		return "local"
+	default:
+		return "google"
+	}
+}
+
+func dailyDuelLimitFromEnv(authMode string) int {
+	value := strings.TrimSpace(os.Getenv("FUTEMON_DAILY_DUEL_LIMIT"))
+	if value != "" {
+		limit, err := strconv.Atoi(value)
+		if err == nil {
+			return limit
+		}
+	}
+	if authMode == "local" {
+		return 0
+	}
+	return 1
+}
+
+func (l *DailyDuelLimiter) counter(userID string, now time.Time) dailyDuelCount {
+	date := now.Format("2006-01-02")
+	counter := l.counts[userID]
+	if counter.Date != date {
+		return dailyDuelCount{Date: date}
+	}
+	return counter
 }
 
 func (s *Server) handleLatestMatch(w http.ResponseWriter, r *http.Request) {
@@ -845,7 +947,7 @@ func accountErrorMessage(err error) string {
 	case errors.Is(err, ErrInvalidAccount):
 		return "Informe um nome publico valido."
 	case errors.Is(err, ErrEncryptionKeyRequired):
-		return "Configure ENV_ENCRYPTION_KEY com 32 bytes antes de salvar uma chave Gemini."
+		return "Configure ENV_ENCRYPTION_KEY com 32 bytes antes de salvar uma chave de API."
 	case errors.Is(err, ErrUserNotFound):
 		return "Usuario nao encontrado."
 	default:

@@ -18,6 +18,9 @@ const pageTemplates = `
       100% { transform: translateY(150px) rotate(260deg); opacity: 0; }
     }
     .confetti-piece { animation: futemon-confetti 1200ms ease-out forwards; }
+    [data-duel-loading] { display: none; }
+    [data-duel-form].is-loading [data-duel-loading] { display: flex; }
+    [data-duel-form].is-loading button, [data-duel-form].is-loading select, [data-duel-form].is-loading input { pointer-events: none; opacity: 0.65; }
   </style>
 </head>
 <body class="{{ if eq .Active "match" }}flex h-screen flex-col overflow-hidden{{ else }}min-h-screen{{ end }} bg-zinc-950 text-zinc-100">
@@ -321,9 +324,14 @@ const pageTemplates = `
 
 {{ define "duels" }}
 <section class="grid gap-6 lg:grid-cols-[420px_1fr]">
-  <form hx-post="/duels/start" class="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+  <form data-duel-form hx-post="/duels/start" class="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
     <h1 class="text-2xl font-bold">Duelos</h1>
-    <p class="mt-1 text-sm text-zinc-400">{{ if .User.HasGeminiAPIKey }}Modo Chave de API Ativo{{ else }}1/1 duelo disponivel hoje. BYOK desativa esse limite.{{ end }}</p>
+    <p class="mt-1 text-sm text-zinc-400">{{ if .User.HasGeminiAPIKey }}BYOK OpenRouter ativo. Duelos sem limite diario local.{{ else }}1/1 duelo disponivel hoje. BYOK desativa esse limite.{{ end }}</p>
+    <div data-duel-error class="mt-4 hidden rounded-md border border-red-500 bg-red-950 px-3 py-2 text-sm text-red-100"></div>
+    <div data-duel-loading class="mt-4 items-center gap-3 rounded-md border border-lime-500 bg-lime-950 px-3 py-2 text-sm text-lime-100">
+      <span class="h-4 w-4 animate-spin rounded-full border-2 border-lime-200 border-t-transparent"></span>
+      <span>Aguardando o narrador montar a partida...</span>
+    </div>
     <label class="mt-5 block text-sm">Seu time
       <select name="team_id" class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2">
         {{ range .Teams }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
@@ -584,11 +592,11 @@ const pageTemplates = `
       </div>
     </div>
     <div>
-      <label class="block text-sm">Chave Gemini API<input name="gemini_api_key" type="password" class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2" placeholder="{{ if .User.HasGeminiAPIKey }}Chave armazenada com AES-GCM-256{{ else }}Cole sua chave Gemini{{ end }}"></label>
-      <p class="mt-2 text-sm text-zinc-400">{{ if .User.HasGeminiAPIKey }}BYOK ativo. Envie uma nova chave para substituir a atual.{{ else }}Sem chave Gemini salva. Duelos casuais seguem no limite diario.{{ end }}</p>
+      <label class="block text-sm">Chave OpenRouter API<input name="gemini_api_key" type="password" class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2" placeholder="{{ if .User.HasGeminiAPIKey }}Chave armazenada com AES-GCM-256{{ else }}Cole sua chave OpenRouter{{ end }}"></label>
+      <p class="mt-2 text-sm text-zinc-400">{{ if .User.HasGeminiAPIKey }}BYOK ativo. Envie uma nova chave para substituir a atual.{{ else }}Sem chave OpenRouter salva. Duelos casuais seguem no limite diario.{{ end }}</p>
     </div>
     {{ if .User.HasGeminiAPIKey }}
-    <label class="flex items-center gap-2 text-sm text-zinc-300"><input name="clear_api_key" type="checkbox" class="h-4 w-4"> Remover chave Gemini salva</label>
+    <label class="flex items-center gap-2 text-sm text-zinc-300"><input name="clear_api_key" type="checkbox" class="h-4 w-4"> Remover chave OpenRouter salva</label>
     {{ end }}
     <button class="rounded-md bg-lime-300 px-4 py-2 font-semibold text-zinc-950">Salvar</button>
   </form>

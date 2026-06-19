@@ -398,6 +398,24 @@ func (s *SQLiteStore) UserByID(id string) (User, bool) {
 	return s.findUser(id)
 }
 
+func (s *SQLiteStore) UserAPIKey(userID string) (string, bool, error) {
+	user, ok := s.findUser(userID)
+	if !ok {
+		return "", false, ErrUserNotFound
+	}
+	if strings.TrimSpace(user.GeminiAPIKey) == "" {
+		return "", false, nil
+	}
+	if s.cipher == nil {
+		return "", false, ErrEncryptionKeyRequired
+	}
+	apiKey, err := s.cipher.Decrypt(user.GeminiAPIKey)
+	if err != nil {
+		return "", false, err
+	}
+	return apiKey, strings.TrimSpace(apiKey) != "", nil
+}
+
 func (s *SQLiteStore) UpsertGoogleUser(profile GoogleProfile) (User, error) {
 	profile.DisplayName = strings.TrimSpace(profile.DisplayName)
 	profile.Email = strings.TrimSpace(profile.Email)

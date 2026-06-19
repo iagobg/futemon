@@ -27,6 +27,7 @@ var (
 type Store interface {
 	CurrentUser() (User, bool)
 	UserByID(id string) (User, bool)
+	UserAPIKey(userID string) (string, bool, error)
 	UpsertGoogleUser(profile GoogleProfile) (User, error)
 	UpdateAccount(input AccountInput) (User, error)
 	Pokemon() []Pokemon
@@ -130,6 +131,13 @@ func (s *MemoryStore) UserByID(id string) (User, bool) {
 		return s.user, true
 	}
 	return User{}, false
+}
+
+func (s *MemoryStore) UserAPIKey(userID string) (string, bool, error) {
+	if userID != s.user.ID || strings.TrimSpace(s.user.GeminiAPIKey) == "" {
+		return "", false, nil
+	}
+	return s.user.GeminiAPIKey, true, nil
 }
 
 func (s *MemoryStore) UpsertGoogleUser(profile GoogleProfile) (User, error) {

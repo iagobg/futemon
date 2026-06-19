@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,11 +19,13 @@ type SimulationPayload struct {
 }
 
 type SimulationEvent struct {
-	Minute     int    `json:"minute"`
-	Type       string `json:"type"`
-	Narrative  string `json:"narrative"`
-	TeamRef    string `json:"team_ref,omitempty"`
-	PokemonRef string `json:"pokemon_ref,omitempty"`
+	Minute              int    `json:"minute"`
+	Type                string `json:"type"`
+	Narrative           string `json:"narrative,omitempty"`
+	NarrativeBuildUp    string `json:"narrative_build_up,omitempty"`
+	NarrativeResolution string `json:"narrative_resolution,omitempty"`
+	TeamRef             string `json:"team_ref,omitempty"`
+	PokemonRef          string `json:"pokemon_ref,omitempty"`
 }
 
 type SimulationConsequence struct {
@@ -61,6 +64,9 @@ func ParseSimulationPayload(data []byte) (SimulationPayload, error) {
 		return SimulationPayload{}, err
 	}
 	normalizeSimulationPayload(&payload)
+	if err := ValidateSimulationPayload(payload); err != nil {
+		return SimulationPayload{}, err
+	}
 	return payload, nil
 }
 
@@ -121,9 +127,72 @@ func renderSimulationText(teamA Team, teamB Team, text string) string {
 }
 
 func normalizeSimulationPayload(payload *SimulationPayload) {
+	for i := range payload.Events {
+		if strings.TrimSpace(payload.Events[i].Narrative) == "" {
+			payload.Events[i].Narrative = joinNarrativeParts(payload.Events[i].NarrativeBuildUp, payload.Events[i].NarrativeResolution)
+		}
+		payload.Events[i].Type = strings.TrimSpace(payload.Events[i].Type)
+		payload.Events[i].TeamRef = normalizeNullableRef(payload.Events[i].TeamRef)
+		payload.Events[i].PokemonRef = normalizeNullableRef(payload.Events[i].PokemonRef)
+	}
 	sort.SliceStable(payload.Events, func(i int, j int) bool {
 		return payload.Events[i].Minute < payload.Events[j].Minute
 	})
+}
+
+func ValidateSimulationPayload(payload SimulationPayload) error {
+	if len(payload.Events) < 3 {
+		return errors.New("simulation payload must contain at least kickoff, halftime and fulltime")
+	}
+	required := map[string]int{"kickoff": 0, "halftime": 20, "fulltime": 40}
+	found := map[string]bool{}
+	for _, event := range payload.Events {
+		if strings.TrimSpace(event.Narrative) == "" {
+			return fmt.Errorf("event at minute %d has empty narrative", event.Minute)
+		}
+		if !validEventType(event.Type) {
+			return fmt.Errorf("invalid event type %q", event.Type)
+		}
+		if wantMinute, ok := required[event.Type]; ok && event.Minute == wantMinute {
+			found[event.Type] = true
+		}
+	}
+	for eventType := range required {
+		if !found[eventType] {
+			return fmt.Errorf("missing required %s event", eventType)
+		}
+	}
+	return nil
+}
+
+func validEventType(eventType string) bool {
+	switch eventType {
+	case "kickoff", "close_chance", "foul", "goal", "injury", "halftime", "fulltime":
+		return true
+	default:
+		return false
+	}
+}
+
+func joinNarrativeParts(buildUp string, resolution string) string {
+	buildUp = strings.TrimSpace(buildUp)
+	resolution = strings.TrimSpace(resolution)
+	switch {
+	case buildUp == "":
+		return resolution
+	case resolution == "":
+		return buildUp
+	default:
+		return buildUp + " " + resolution
+	}
+}
+
+func normalizeNullableRef(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "null" {
+		return ""
+	}
+	return value
 }
 
 func resolveSimulationRefs(teamA Team, teamB Team, teamRef string, pokemonRef string) (string, int) {
@@ -139,6 +208,8 @@ func resolveSimulationRefs(teamA Team, teamB Team, teamRef string, pokemonRef st
 
 	pokemonID := 0
 	switch pokemonRef {
+	case "goleiro":
+		pokemonID = team.Goalkeeper.ID
 	case "goalkeeper":
 		pokemonID = team.Goalkeeper.ID
 	case "fixo":

@@ -154,7 +154,7 @@ func pokemonTypeLabel(value string) string {
 	case "dark":
 		return "Sombrio"
 	case "steel":
-		return "Aco"
+		return "Metal"
 	case "fairy":
 		return "Fada"
 	default:
