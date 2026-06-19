@@ -4,7 +4,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 GOOS=linux go build -o /out/futemon ./cmd/server
+RUN CGO_ENABLED=1 GOOS=linux go build -o /out/futemon ./cmd/server \
+  && CGO_ENABLED=1 GOOS=linux go build -o /out/futemon-migrate ./cmd/migrate
 
 FROM debian:bookworm-slim
 
@@ -14,6 +15,7 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=build /out/futemon /app/futemon
+COPY --from=build /out/futemon-migrate /app/futemon-migrate
 COPY examples /app/examples
 COPY data /app/data
 

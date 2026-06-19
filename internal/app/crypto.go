@@ -5,9 +5,11 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 )
 
 var ErrEncryptionKeyRequired = errors.New("encryption key required")
@@ -18,7 +20,7 @@ type KeyCipher struct {
 
 func NewKeyCipher(key []byte) (KeyCipher, error) {
 	if len(key) != 32 {
-		return KeyCipher{}, fmt.Errorf("%w: expected 32 bytes", ErrEncryptionKeyRequired)
+		return KeyCipher{}, fmt.Errorf("%w: expected 32 bytes, got %d", ErrEncryptionKeyRequired, len(key))
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -29,6 +31,44 @@ func NewKeyCipher(key []byte) (KeyCipher, error) {
 		return KeyCipher{}, err
 	}
 	return KeyCipher{aead: aead}, nil
+}
+
+func NewKeyCipherFromString(value string) (KeyCipher, error) {
+	key, err := parseKeyCipherString(value)
+	if err != nil {
+		return KeyCipher{}, err
+	}
+	return NewKeyCipher(key)
+}
+
+func parseKeyCipherString(value string) ([]byte, error) {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, "base64:") {
+		return decodeKeyCipherBase64(strings.TrimPrefix(value, "base64:"))
+	}
+	if strings.HasPrefix(value, "hex:") {
+		return decodeKeyCipherHex(strings.TrimPrefix(value, "hex:"))
+	}
+	if len(value) == 64 {
+		if decoded, err := hex.DecodeString(value); err == nil && len(decoded) == 32 {
+			return decoded, nil
+		}
+	}
+	if decoded, err := decodeKeyCipherBase64(value); err == nil && len(decoded) == 32 {
+		return decoded, nil
+	}
+	return []byte(value), nil
+}
+
+func decodeKeyCipherBase64(value string) ([]byte, error) {
+	if decoded, err := base64.StdEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	return base64.RawStdEncoding.DecodeString(value)
+}
+
+func decodeKeyCipherHex(value string) ([]byte, error) {
+	return hex.DecodeString(value)
 }
 
 func (c KeyCipher) Encrypt(plainText string) (string, error) {

@@ -37,7 +37,7 @@ func main() {
 	}
 	defer store.Close()
 	if key := os.Getenv("ENV_ENCRYPTION_KEY"); key != "" {
-		cipher, err := app.NewKeyCipher([]byte(key))
+		cipher, err := app.NewKeyCipherFromString(key)
 		if err != nil {
 			log.Fatalf("configure encryption: %v", err)
 		}
