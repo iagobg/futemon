@@ -22,6 +22,7 @@ var (
 	ErrUserNotFound     = errors.New("user not found")
 	ErrInvalidAccount   = errors.New("invalid account")
 	ErrTransferLimit    = errors.New("weekly transfer limit reached")
+	ErrTransferTooLarge = errors.New("weekly transfer can change only one pokemon")
 )
 
 type Store interface {
@@ -42,9 +43,10 @@ type Store interface {
 	TransferWindow(teamID string) TransferWindow
 	SaveTeam(input TeamInput) (Team, error)
 	DeleteTeam(id string, userID string) error
-	LatestMatch() (MatchResult, bool)
 	MatchByID(id string) (MatchResult, bool)
-	SetLatestMatch(match MatchResult)
+	SaveMatch(match MatchResult) error
+	DailyDuelCount(userID string, date string) (int, error)
+	RecordDailyDuel(userID string, date string) error
 }
 
 type MemoryStore struct {
@@ -54,7 +56,7 @@ type MemoryStore struct {
 	tournaments []Tournament
 	matches     []MatchResult
 	transfers   []TeamTransfer
-	latestMatch *MatchResult
+	duelUsage   map[string]int
 	user        User
 }
 
@@ -119,6 +121,7 @@ func NewMemoryStore() *MemoryStore {
 			{ID: "tourn-001", Name: "Copa Professor Carvalho", Status: "registration", Teams: []Team{teamA, teamC}},
 			{ID: "tourn-002", Name: "Liga dos Centros Pokemon", Status: "active", Teams: []Team{teamB, teamC}},
 		},
+		duelUsage: make(map[string]int),
 	}
 }
 
@@ -134,10 +137,10 @@ func (s *MemoryStore) UserByID(id string) (User, bool) {
 }
 
 func (s *MemoryStore) UserAPIKey(userID string) (string, bool, error) {
-	if userID != s.user.ID || strings.TrimSpace(s.user.GeminiAPIKey) == "" {
+	if userID != s.user.ID || strings.TrimSpace(s.user.OpenRouterAPIKey) == "" {
 		return "", false, nil
 	}
-	return s.user.GeminiAPIKey, true, nil
+	return s.user.OpenRouterAPIKey, true, nil
 }
 
 func (s *MemoryStore) UpsertGoogleUser(profile GoogleProfile) (User, error) {
@@ -155,11 +158,11 @@ func (s *MemoryStore) UpdateAccount(input AccountInput) (User, error) {
 	s.user.DisplayName = strings.TrimSpace(input.DisplayName)
 	s.user.AvatarIcon = normalizeAvatarIcon(input.AvatarIcon)
 	if input.ClearAPIKey {
-		s.user.GeminiAPIKey = ""
-		s.user.HasGeminiAPIKey = false
-	} else if input.GeminiAPIKey != "" {
-		s.user.GeminiAPIKey = input.GeminiAPIKey
-		s.user.HasGeminiAPIKey = true
+		s.user.OpenRouterAPIKey = ""
+		s.user.HasOpenRouterAPIKey = false
+	} else if input.OpenRouterAPIKey != "" {
+		s.user.OpenRouterAPIKey = input.OpenRouterAPIKey
+		s.user.HasOpenRouterAPIKey = true
 	}
 	return s.user, nil
 }
@@ -292,7 +295,11 @@ func (s *MemoryStore) SaveTeam(input TeamInput) (Team, error) {
 		if existing.IsRetired {
 			return Team{}, ErrTeamNotFound
 		}
-		pokemonChanged := teamPokemonChanged(existing, team)
+		playerChanges := changedPlayers(existing, team)
+		if len(playerChanges) > 1 {
+			return Team{}, ErrTransferTooLarge
+		}
+		pokemonChanged := len(playerChanges) > 0
 		if pokemonChanged && s.TransferWindow(existing.ID).Used {
 			return Team{}, ErrTransferLimit
 		}
@@ -345,13 +352,6 @@ func (s *MemoryStore) DeleteTeam(id string, userID string) error {
 		return nil
 	}
 	return ErrTeamNotFound
-}
-
-func (s *MemoryStore) LatestMatch() (MatchResult, bool) {
-	if s.latestMatch == nil {
-		return MatchResult{}, false
-	}
-	return *s.latestMatch, true
 }
 
 func (s *MemoryStore) MatchByID(id string) (MatchResult, bool) {
@@ -416,12 +416,21 @@ func normalizeTeamInput(input TeamInput, pokemonByID map[int]Pokemon) (TeamInput
 	return input, nil
 }
 
-func (s *MemoryStore) SetLatestMatch(match MatchResult) {
+func (s *MemoryStore) SaveMatch(match MatchResult) error {
 	if match.EndTime.IsZero() {
 		match.EndTime = match.StartTime.Add(matchDuration(match.Events))
 	}
-	s.latestMatch = &match
 	s.matches = append(s.matches, match)
+	return nil
+}
+
+func (s *MemoryStore) DailyDuelCount(userID string, date string) (int, error) {
+	return s.duelUsage[userID+"|"+date], nil
+}
+
+func (s *MemoryStore) RecordDailyDuel(userID string, date string) error {
+	s.duelUsage[userID+"|"+date]++
+	return nil
 }
 
 func (s *MemoryStore) withRecord(team Team) Team {

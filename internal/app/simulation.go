@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -131,14 +132,45 @@ func normalizeSimulationPayload(payload *SimulationPayload) {
 		if strings.TrimSpace(payload.Events[i].Narrative) == "" {
 			payload.Events[i].Narrative = joinNarrativeParts(payload.Events[i].NarrativeBuildUp, payload.Events[i].NarrativeResolution)
 		}
+		payload.Events[i].Narrative = normalizeTeamNamePlaceholders(payload.Events[i].Narrative)
+		payload.Events[i].NarrativeBuildUp = normalizeTeamNamePlaceholders(payload.Events[i].NarrativeBuildUp)
+		payload.Events[i].NarrativeResolution = normalizeTeamNamePlaceholders(payload.Events[i].NarrativeResolution)
 		payload.Events[i].Type = strings.TrimSpace(payload.Events[i].Type)
 		payload.Events[i].TeamRef = normalizeNullableRef(payload.Events[i].TeamRef)
 		payload.Events[i].PokemonRef = normalizeNullableRef(payload.Events[i].PokemonRef)
+	}
+	for i := range payload.Consequences {
+		payload.Consequences[i].EffectDescription = normalizeTeamNamePlaceholders(payload.Consequences[i].EffectDescription)
 	}
 	sort.SliceStable(payload.Events, func(i int, j int) bool {
 		return payload.Events[i].Minute < payload.Events[j].Minute
 	})
 }
+
+var (
+	teamANameReferencePattern = regexp.MustCompile(`(?i)\b(?:time|team)\s+a\b|\bteam_a\b`)
+	teamBNameReferencePattern = regexp.MustCompile(`(?i)\b(?:time|team)\s+b\b|\bteam_b\b`)
+)
+
+func normalizeTeamNamePlaceholders(text string) string {
+	if text == "" {
+		return ""
+	}
+	segments := placeholderPattern.Split(text, -1)
+	placeholders := placeholderPattern.FindAllString(text, -1)
+	var out strings.Builder
+	for i, segment := range segments {
+		segment = teamANameReferencePattern.ReplaceAllString(segment, "{{team_a.name}}")
+		segment = teamBNameReferencePattern.ReplaceAllString(segment, "{{team_b.name}}")
+		out.WriteString(segment)
+		if i < len(placeholders) {
+			out.WriteString(placeholders[i])
+		}
+	}
+	return out.String()
+}
+
+var placeholderPattern = regexp.MustCompile(`\{\{[^{}]+\}\}`)
 
 func ValidateSimulationPayload(payload SimulationPayload) error {
 	if len(payload.Events) < 3 {

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,7 +38,7 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL,
   picture_url TEXT NOT NULL DEFAULT '',
   avatar_icon INTEGER NOT NULL DEFAULT 0,
-  gemini_api_key TEXT,
+  openrouter_api_key TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   deleted_at TEXT
 );
@@ -116,6 +118,14 @@ CREATE TABLE IF NOT EXISTS team_transactions (
   summary TEXT NOT NULL DEFAULT '',
   window_start TEXT,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS duel_usage (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  usage_date TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, usage_date)
 );`
 
 type SQLiteStore struct {
@@ -124,6 +134,9 @@ type SQLiteStore struct {
 }
 
 func NewSQLiteStore(path string) (*SQLiteStore, error) {
+	if err := ensureSQLiteDir(path); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite3", path)
 	if err != nil {
 		return nil, err
@@ -150,6 +163,14 @@ func NewSQLiteStore(path string) (*SQLiteStore, error) {
 	return store, nil
 }
 
+func ensureSQLiteDir(path string) error {
+	dir := filepath.Dir(path)
+	if dir == "." || dir == "" {
+		return nil
+	}
+	return os.MkdirAll(dir, 0o755)
+}
+
 func (s *SQLiteStore) WithCipher(cipher KeyCipher) *SQLiteStore {
 	s.cipher = &cipher
 	return s
@@ -173,6 +194,9 @@ func (s *SQLiteStore) migrate() error {
 		return err
 	}
 	if err := s.ensureColumn("users", "avatar_icon", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	if err := s.ensureColumn("users", "openrouter_api_key", "TEXT"); err != nil {
 		return err
 	}
 	for _, column := range []string{"goalkeeper_ability", "fixo_ability", "ala_esquerda_ability", "ala_direita_ability", "pivo_ability"} {
@@ -324,7 +348,9 @@ func (s *SQLiteStore) seedDemoMatches() error {
 		demoMatch("match-demo-005", paleta, kanto, now.Add(72*time.Hour), []demoGoal{{12, "b", kanto.AlaEsquerda.ID}}),
 	}
 	for _, match := range matches {
-		s.SetLatestMatch(match)
+		if err := s.SaveMatch(match); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -395,17 +421,41 @@ func (s *SQLiteStore) UserAPIKey(userID string) (string, bool, error) {
 	if !ok {
 		return "", false, ErrUserNotFound
 	}
-	if strings.TrimSpace(user.GeminiAPIKey) == "" {
+	if strings.TrimSpace(user.OpenRouterAPIKey) == "" {
 		return "", false, nil
 	}
 	if s.cipher == nil {
 		return "", false, ErrEncryptionKeyRequired
 	}
-	apiKey, err := s.cipher.Decrypt(user.GeminiAPIKey)
+	apiKey, err := s.cipher.Decrypt(user.OpenRouterAPIKey)
 	if err != nil {
 		return "", false, err
 	}
 	return apiKey, strings.TrimSpace(apiKey) != "", nil
+}
+
+func (s *SQLiteStore) DailyDuelCount(userID string, date string) (int, error) {
+	var count int
+	err := s.db.QueryRow(
+		"SELECT count FROM duel_usage WHERE user_id = ? AND usage_date = ?",
+		userID, date,
+	).Scan(&count)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return count, err
+}
+
+func (s *SQLiteStore) RecordDailyDuel(userID string, date string) error {
+	_, err := s.db.Exec(`
+		INSERT INTO duel_usage (user_id, usage_date, count, updated_at)
+		VALUES (?, ?, 1, ?)
+		ON CONFLICT(user_id, usage_date) DO UPDATE SET
+			count = count + 1,
+			updated_at = excluded.updated_at`,
+		userID, date, formatTime(time.Now().UTC()),
+	)
+	return err
 }
 
 func (s *SQLiteStore) UpsertGoogleUser(profile GoogleProfile) (User, error) {
@@ -461,14 +511,14 @@ func (s *SQLiteStore) UpdateAccount(input AccountInput) (User, error) {
 		return User{}, ErrUserNotFound
 	}
 
-	apiKey := user.GeminiAPIKey
+	apiKey := user.OpenRouterAPIKey
 	if input.ClearAPIKey {
 		apiKey = ""
-	} else if strings.TrimSpace(input.GeminiAPIKey) != "" {
+	} else if strings.TrimSpace(input.OpenRouterAPIKey) != "" {
 		if s.cipher == nil {
 			return User{}, ErrEncryptionKeyRequired
 		}
-		encrypted, err := s.cipher.Encrypt(strings.TrimSpace(input.GeminiAPIKey))
+		encrypted, err := s.cipher.Encrypt(strings.TrimSpace(input.OpenRouterAPIKey))
 		if err != nil {
 			return User{}, err
 		}
@@ -476,7 +526,7 @@ func (s *SQLiteStore) UpdateAccount(input AccountInput) (User, error) {
 	}
 
 	if _, err := s.db.Exec(
-		"UPDATE users SET display_name = ?, avatar_icon = ?, gemini_api_key = ? WHERE id = ?",
+		"UPDATE users SET display_name = ?, avatar_icon = ?, openrouter_api_key = ? WHERE id = ?",
 		input.DisplayName, normalizeAvatarIcon(input.AvatarIcon), nullString(apiKey), input.UserID,
 	); err != nil {
 		return User{}, err
@@ -491,15 +541,15 @@ func (s *SQLiteStore) UpdateAccount(input AccountInput) (User, error) {
 func (s *SQLiteStore) findUser(id string) (User, bool) {
 	var user User
 	err := s.db.QueryRow(`
-		SELECT id, google_id, display_name, email, COALESCE(picture_url, ''), COALESCE(avatar_icon, 0), COALESCE(gemini_api_key, ''), role
+		SELECT id, google_id, display_name, email, COALESCE(picture_url, ''), COALESCE(avatar_icon, 0), COALESCE(openrouter_api_key, ''), role
 		FROM users
 		WHERE id = ? AND deleted_at IS NULL`, id).Scan(
-		&user.ID, &user.GoogleID, &user.DisplayName, &user.Email, &user.PictureURL, &user.AvatarIcon, &user.GeminiAPIKey, &user.Role,
+		&user.ID, &user.GoogleID, &user.DisplayName, &user.Email, &user.PictureURL, &user.AvatarIcon, &user.OpenRouterAPIKey, &user.Role,
 	)
 	if err != nil {
 		return User{}, false
 	}
-	user.HasGeminiAPIKey = user.GeminiAPIKey != ""
+	user.HasOpenRouterAPIKey = user.OpenRouterAPIKey != ""
 	return user, true
 }
 
@@ -760,7 +810,11 @@ func (s *SQLiteStore) updateTeam(input TeamInput) (Team, error) {
 		return Team{}, err
 	}
 	after.CreatedAt = before.CreatedAt
-	pokemonChanged := teamPokemonChanged(before, after)
+	playerChanges := changedPlayers(before, after)
+	if len(playerChanges) > 1 {
+		return Team{}, ErrTransferTooLarge
+	}
+	pokemonChanged := len(playerChanges) > 0
 	if pokemonChanged && s.TransferWindow(input.ID).Used {
 		return Team{}, ErrTransferLimit
 	}
@@ -879,14 +933,6 @@ func (s *SQLiteStore) ensureInitialTeamTransactions() error {
 	return nil
 }
 
-func (s *SQLiteStore) LatestMatch() (MatchResult, bool) {
-	return s.matchByQuery(`
-		SELECT id, team_a_id, team_b_id, COALESCE(team_a_snapshot, '{}'), COALESCE(team_b_snapshot, '{}'), score_a, score_b, raw_json_output, COALESCE(start_time, ''), COALESCE(ended_at, '')
-		FROM matches
-		ORDER BY created_at DESC
-		LIMIT 1`)
-}
-
 func (s *SQLiteStore) MatchByID(id string) (MatchResult, bool) {
 	return s.matchByQuery(`
 		SELECT id, team_a_id, team_b_id, COALESCE(team_a_snapshot, '{}'), COALESCE(team_b_snapshot, '{}'), score_a, score_b, raw_json_output, COALESCE(start_time, ''), COALESCE(ended_at, '')
@@ -939,26 +985,26 @@ func (s *SQLiteStore) teamFromSnapshot(snapshot string, fallbackID string) (Team
 	return s.findTeam(fallbackID, true)
 }
 
-func (s *SQLiteStore) SetLatestMatch(match MatchResult) {
+func (s *SQLiteStore) SaveMatch(match MatchResult) error {
 	match.ScoreTeamA, match.ScoreTeamB = match.Score()
 	if match.EndTime.IsZero() {
 		match.EndTime = match.StartTime.Add(matchDuration(match.Events))
 	}
 	payload, err := json.Marshal(match)
 	if err != nil {
-		return
+		return err
 	}
 	teamASnapshot, err := json.Marshal(match.TeamA)
 	if err != nil {
-		return
+		return err
 	}
 	teamBSnapshot, err := json.Marshal(match.TeamB)
 	if err != nil {
-		return
+		return err
 	}
 	tx, err := s.db.Begin()
 	if err != nil {
-		return
+		return err
 	}
 	defer tx.Rollback()
 
@@ -970,7 +1016,7 @@ func (s *SQLiteStore) SetLatestMatch(match MatchResult) {
 		match.ID, "duel_random", match.TeamA.ID, match.TeamB.ID, string(teamASnapshot), string(teamBSnapshot), match.ScoreTeamA, match.ScoreTeamB,
 		string(payload), formatTime(match.StartTime), formatTime(match.EndTime), formatTime(time.Now().UTC()),
 	); err != nil {
-		return
+		return err
 	}
 	for sequence, event := range match.Events {
 		if _, err := tx.Exec(`
@@ -981,10 +1027,10 @@ func (s *SQLiteStore) SetLatestMatch(match MatchResult) {
 			newID("event"), match.ID, sequence, event.Minute, event.Type, event.Narrative,
 			event.DramaticPauseSeconds, nullString(event.TeamID), nullInt(event.PokemonID),
 		); err != nil {
-			return
+			return err
 		}
 	}
-	_ = tx.Commit()
+	return tx.Commit()
 }
 
 func (s *SQLiteStore) matchEvents(matchID string) ([]MatchEvent, bool) {

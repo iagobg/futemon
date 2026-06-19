@@ -81,6 +81,31 @@ func TestParseSimulationPayloadMergesBuildUpAndResolution(t *testing.T) {
 	}
 }
 
+func TestParseSimulationPayloadNormalizesTeamNameReferencesOnlyInNarrativeText(t *testing.T) {
+	payload, err := ParseSimulationPayload([]byte(`{
+		"events": [
+			{"minute": 0, "type": "kickoff", "team_ref": null, "pokemon_ref": null, "narrative_build_up": "Time A sobe linhas contra team B.", "narrative_resolution": "{{team_a.pivo}} puxa a pressao."},
+			{"minute": 20, "type": "halftime", "team_ref": null, "pokemon_ref": null, "narrative_build_up": "team_a respira.", "narrative_resolution": "Team B conversa."},
+			{"minute": 40, "type": "fulltime", "team_ref": "team_a", "pokemon_ref": "pivo", "narrative_build_up": "O time B tentou ate o fim.", "narrative_resolution": "Fim."}
+		],
+		"consequences": [
+			{"team_ref": "team_b", "pokemon_ref": "fixo", "effect_description": "team_a cansou o time B."}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Events[0].Narrative; got != "{{team_a.name}} sobe linhas contra {{team_b.name}}. {{team_a.pivo}} puxa a pressao." {
+		t.Fatalf("normalized narrative = %q", got)
+	}
+	if payload.Events[2].TeamRef != "team_a" || payload.Events[2].PokemonRef != "pivo" {
+		t.Fatalf("structured refs were changed: %+v", payload.Events[2])
+	}
+	if got := payload.Consequences[0].EffectDescription; got != "{{team_a.name}} cansou o {{team_b.name}}." {
+		t.Fatalf("normalized consequence = %q", got)
+	}
+}
+
 func TestParseSimulationPayloadRejectsMissingRequiredEvents(t *testing.T) {
 	_, err := ParseSimulationPayload([]byte(`{
 		"events": [

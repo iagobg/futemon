@@ -75,6 +75,8 @@ func TestTeamsPageAndCreateTeamHandler(t *testing.T) {
 	}
 	if editBody := editPage.Body.String(); !strings.Contains(editBody, "Editar Escalacao") || !strings.Contains(editBody, "Kanto Press") {
 		t.Fatalf("edit form did not render existing team: %s", editBody)
+	} else if !strings.Contains(editBody, "permite trocar exatamente 1 Pokemon") {
+		t.Fatalf("edit form did not explain weekly one-Pokemon transfer limit: %s", editBody)
 	}
 
 	form := url.Values{
@@ -140,14 +142,16 @@ func TestMatchLiveHandlerRendersBroadcastState(t *testing.T) {
 	teamA, _ := store.FindTeam("team-kanto-press")
 	teamB, _ := store.FindTeam("team-paleta-bolada")
 	match := SimulateMatch(teamA, teamB)
-	store.SetLatestMatch(match)
+	if err := store.SaveMatch(match); err != nil {
+		t.Fatal(err)
+	}
 	server := NewServer(store)
 
 	res := httptest.NewRecorder()
-	server.Routes().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/match/live", nil))
+	server.Routes().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/match/"+match.ID+"/live", nil))
 
 	if res.Code != http.StatusOK {
-		t.Fatalf("GET /match/live status = %d", res.Code)
+		t.Fatalf("GET /match/{id}/live status = %d", res.Code)
 	}
 	body := res.Body.String()
 	if !strings.Contains(body, "Transmissao") && !strings.Contains(body, "AO VIVO") {
@@ -206,14 +210,16 @@ func TestMatchSyncHandlerReturnsClockContract(t *testing.T) {
 	teamA, _ := store.FindTeam("team-kanto-press")
 	teamB, _ := store.FindTeam("team-paleta-bolada")
 	match := SimulateMatch(teamA, teamB)
-	store.SetLatestMatch(match)
+	if err := store.SaveMatch(match); err != nil {
+		t.Fatal(err)
+	}
 	server := NewServer(store)
 
 	res := httptest.NewRecorder()
-	server.Routes().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/match/sync", nil))
+	server.Routes().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/match/"+match.ID+"/sync", nil))
 
 	if res.Code != http.StatusOK {
-		t.Fatalf("GET /match/sync status = %d", res.Code)
+		t.Fatalf("GET /match/{id}/sync status = %d", res.Code)
 	}
 	var state MatchSyncState
 	if err := json.NewDecoder(res.Body).Decode(&state); err != nil {
@@ -368,8 +374,8 @@ func TestStartDuelAppliesDailyLimitWithoutBYOK(t *testing.T) {
 
 func TestStartDuelBypassesDailyLimitWithBYOK(t *testing.T) {
 	store := NewMemoryStore()
-	store.user.GeminiAPIKey = "user-openrouter-key"
-	store.user.HasGeminiAPIKey = true
+	store.user.OpenRouterAPIKey = "user-openrouter-key"
+	store.user.HasOpenRouterAPIKey = true
 	server := NewServer(store)
 	var usedKey string
 	server.byokGenerator = func(apiKey string) MatchGenerator {
@@ -405,7 +411,7 @@ func TestTeamHistoryPageLinksReplayAndRecap(t *testing.T) {
 		{Minute: 7, Type: "goal", TeamID: teamA.ID, PokemonID: teamA.Pivo.ID, Narrative: "Machamp marca."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
 	})
-	store.SetLatestMatch(match)
+	store.SaveMatch(match)
 	server := NewServer(store)
 
 	req := httptest.NewRequest(http.MethodGet, "/teams/"+teamA.ID, nil)
@@ -444,7 +450,7 @@ func TestRetiredTeamPageRendersButCannotBeChallenged(t *testing.T) {
 		{Minute: 12, Type: "goal", TeamID: retired.ID, PokemonID: retired.Pivo.ID, Narrative: "Dragonite abre o placar."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
 	})
-	store.SetLatestMatch(match)
+	store.SaveMatch(match)
 	if err := store.DeleteTeam(retired.ID, demoUserID); err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +521,7 @@ func TestGlobalTeamsCanSortByBestRecord(t *testing.T) {
 	defer store.Close()
 	teamA, _ := store.FindTeam("team-kanto-press")
 	teamB, _ := store.FindTeam("team-paleta-bolada")
-	store.SetLatestMatch(completedTestMatch("match-global-best", teamA, teamB, []MatchEvent{
+	store.SaveMatch(completedTestMatch("match-global-best", teamA, teamB, []MatchEvent{
 		{Minute: 4, Type: "goal", TeamID: teamA.ID, PokemonID: teamA.Pivo.ID, Narrative: "Gol."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
 	}))
@@ -543,7 +549,7 @@ func TestGlobalTeamsDefaultsToBestRecord(t *testing.T) {
 	defer store.Close()
 	teamA, _ := store.FindTeam("team-kanto-press")
 	teamB, _ := store.FindTeam("team-paleta-bolada")
-	store.SetLatestMatch(completedTestMatch("match-global-default-best", teamA, teamB, []MatchEvent{
+	store.SaveMatch(completedTestMatch("match-global-default-best", teamA, teamB, []MatchEvent{
 		{Minute: 4, Type: "goal", TeamID: teamA.ID, PokemonID: teamA.Pivo.ID, Narrative: "Gol."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
 	}))
@@ -575,7 +581,7 @@ func TestMatchRecapUsesLoadedBroadcastRenderer(t *testing.T) {
 		{Minute: 11, Type: "goal", TeamID: teamB.ID, PokemonID: teamB.Pivo.ID, Narrative: "Dragonite marca para o visitante."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim de jogo."},
 	})
-	store.SetLatestMatch(match)
+	store.SaveMatch(match)
 	server := NewServer(store)
 
 	res := httptest.NewRecorder()
@@ -601,7 +607,7 @@ func TestMatchReplayUsesClientSideReplayMode(t *testing.T) {
 		{Minute: 11, Type: "goal", TeamID: teamB.ID, PokemonID: teamB.Pivo.ID, Narrative: "Dragonite marca para o visitante."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim de jogo."},
 	})
-	store.SetLatestMatch(match)
+	store.SaveMatch(match)
 	server := NewServer(store)
 
 	res := httptest.NewRecorder()

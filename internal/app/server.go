@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -69,7 +68,7 @@ func NewServer(store Store) *Server {
 			"trainerAvatarStyle":   trainerAvatarStyle,
 			"trainerInitial":       trainerInitial,
 			"transferKindLabel":    transferKindLabel,
-		}).Parse(pageTemplates)),
+		}).Parse(mustReadEmbeddedText("templates/page.html"))),
 	}
 }
 
@@ -86,10 +85,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/profile", s.handleProfile)
 	mux.HandleFunc("/duels", s.handleDuels)
 	mux.HandleFunc("/duels/start", s.handleStartDuel)
-	mux.HandleFunc("/match/latest", s.handleLatestMatch)
-	mux.HandleFunc("/match/events", s.handleMatchEvents)
-	mux.HandleFunc("/match/live", s.handleMatchLive)
-	mux.HandleFunc("/match/sync", s.handleMatchSync)
 	mux.HandleFunc("/match/", s.handleMatchRoute)
 	mux.HandleFunc("/tournaments", s.handleTournaments)
 	mux.HandleFunc("/global-teams", s.handleGlobalTeams)
@@ -260,9 +255,18 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Nao foi possivel ler a chave BYOK da conta.", http.StatusInternalServerError)
 		return
 	}
-	if !hasUserAPIKey && !s.duelLimiter.CanUse(user.ID, time.Now()) {
-		http.Error(w, "Limite diario de duelos atingido. Configure uma chave OpenRouter na conta para usar BYOK.", http.StatusTooManyRequests)
-		return
+	now := time.Now()
+	if !hasUserAPIKey {
+		canUse, err := s.duelLimiter.CanUse(s.store, user.ID, now)
+		if err != nil {
+			log.Printf("load duel usage failed: user=%s error=%v", user.ID, err)
+			http.Error(w, "Nao foi possivel verificar o limite diario.", http.StatusInternalServerError)
+			return
+		}
+		if !canUse {
+			http.Error(w, "Limite diario de duelos atingido. Configure uma chave OpenRouter na conta para usar BYOK.", http.StatusTooManyRequests)
+			return
+		}
 	}
 
 	generator := s.matchGenerator
@@ -275,48 +279,46 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Nao foi possivel gerar a partida pela API. Veja o log do servidor para o erro exato.", http.StatusBadGateway)
 		return
 	}
-	if !hasUserAPIKey {
-		s.duelLimiter.Record(user.ID, time.Now())
+	if err := s.store.SaveMatch(match); err != nil {
+		log.Printf("save duel failed: match=%s error=%v", match.ID, err)
+		http.Error(w, "A partida foi gerada, mas nao foi possivel salva-la.", http.StatusInternalServerError)
+		return
 	}
-	s.store.SetLatestMatch(match)
+	if !hasUserAPIKey {
+		if err := s.duelLimiter.Record(s.store, user.ID, now); err != nil {
+			log.Printf("record duel usage failed: user=%s error=%v", user.ID, err)
+			http.Error(w, "A partida foi salva, mas nao foi possivel registrar o limite diario.", http.StatusInternalServerError)
+			return
+		}
+	}
 	w.Header().Set("HX-Redirect", "/match/"+match.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 type DailyDuelLimiter struct {
-	mu     sync.Mutex
-	limit  int
-	counts map[string]dailyDuelCount
-}
-
-type dailyDuelCount struct {
-	Date  string
-	Count int
+	limit int
 }
 
 func NewDailyDuelLimiter(limit int) *DailyDuelLimiter {
-	return &DailyDuelLimiter{limit: limit, counts: make(map[string]dailyDuelCount)}
+	return &DailyDuelLimiter{limit: limit}
 }
 
-func (l *DailyDuelLimiter) CanUse(userID string, now time.Time) bool {
+func (l *DailyDuelLimiter) CanUse(store Store, userID string, now time.Time) (bool, error) {
 	if l == nil || l.limit <= 0 {
-		return true
+		return true, nil
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	counter := l.counter(userID, now)
-	return counter.Count < l.limit
+	count, err := store.DailyDuelCount(userID, duelUsageDate(now))
+	if err != nil {
+		return false, err
+	}
+	return count < l.limit, nil
 }
 
-func (l *DailyDuelLimiter) Record(userID string, now time.Time) {
+func (l *DailyDuelLimiter) Record(store Store, userID string, now time.Time) error {
 	if l == nil || l.limit <= 0 {
-		return
+		return nil
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	counter := l.counter(userID, now)
-	counter.Count++
-	l.counts[userID] = counter
+	return store.RecordDailyDuel(userID, duelUsageDate(now))
 }
 
 func normalizeAuthMode(value string) string {
@@ -342,48 +344,8 @@ func dailyDuelLimitFromEnv(authMode string) int {
 	return 1
 }
 
-func (l *DailyDuelLimiter) counter(userID string, now time.Time) dailyDuelCount {
-	date := now.Format("2006-01-02")
-	counter := l.counts[userID]
-	if counter.Date != date {
-		return dailyDuelCount{Date: date}
-	}
-	return counter
-}
-
-func (s *Server) handleLatestMatch(w http.ResponseWriter, r *http.Request) {
-	match, ok := s.store.LatestMatch()
-	if !ok {
-		http.Redirect(w, r, "/duels", http.StatusSeeOther)
-		return
-	}
-	http.Redirect(w, r, "/match/"+match.ID, http.StatusSeeOther)
-}
-
-func (s *Server) handleMatchEvents(w http.ResponseWriter, r *http.Request) {
-	match, ok := s.store.LatestMatch()
-	if !ok {
-		http.Error(w, "partida nao encontrada", http.StatusNotFound)
-		return
-	}
-
-	state := RenderMatch(match, time.Now())
-	var done []RenderedMatchEvent
-	for _, event := range state.Events {
-		if event.Status == "done" {
-			done = append(done, event)
-		}
-	}
-	s.render(w, "eventList", done)
-}
-
-func (s *Server) handleMatchLive(w http.ResponseWriter, r *http.Request) {
-	match, ok := s.store.LatestMatch()
-	if !ok {
-		http.Error(w, "partida nao encontrada", http.StatusNotFound)
-		return
-	}
-	s.render(w, "matchLive", matchRenderState(match, time.Now(), "live"))
+func duelUsageDate(now time.Time) string {
+	return now.UTC().Format("2006-01-02")
 }
 
 func (s *Server) handleMatchRoute(w http.ResponseWriter, r *http.Request) {
@@ -412,22 +374,14 @@ func (s *Server) handleMatchRoute(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "layout", ViewData{Active: "match", User: user, Match: match, MatchState: replayMatchRenderState(match)})
 	case "sync":
 		s.renderMatchSync(w, match)
+	case "events":
+		s.renderDoneMatchEvents(w, match)
 	case "recap":
 		user, _ := s.currentUser(r)
 		s.render(w, "layout", ViewData{Active: "match", User: user, Match: match, MatchState: reportMatchRenderState(match)})
 	default:
 		http.NotFound(w, r)
 	}
-}
-
-func (s *Server) handleMatchSync(w http.ResponseWriter, r *http.Request) {
-	match, ok := s.store.LatestMatch()
-	if !ok {
-		http.Error(w, "partida nao encontrada", http.StatusNotFound)
-		return
-	}
-
-	s.renderMatchSync(w, match)
 }
 
 func (s *Server) renderMatchSync(w http.ResponseWriter, match MatchResult) {
@@ -447,6 +401,17 @@ func (s *Server) renderMatchSync(w http.ResponseWriter, match MatchResult) {
 		StartTimeMS:  state.StartedAtMS,
 		EndedAtMS:    state.EndedAtMS,
 	})
+}
+
+func (s *Server) renderDoneMatchEvents(w http.ResponseWriter, match MatchResult) {
+	state := RenderMatch(match, time.Now())
+	var done []RenderedMatchEvent
+	for _, event := range state.Events {
+		if event.Status == "done" {
+			done = append(done, event)
+		}
+	}
+	s.render(w, "eventList", done)
 }
 
 func (s *Server) handleTournaments(w http.ResponseWriter, r *http.Request) {
@@ -567,11 +532,11 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, err := s.store.UpdateAccount(AccountInput{
-		UserID:       user.ID,
-		DisplayName:  r.FormValue("display_name"),
-		AvatarIcon:   parseAvatarIcon(r.FormValue("avatar_icon")),
-		GeminiAPIKey: r.FormValue("gemini_api_key"),
-		ClearAPIKey:  r.FormValue("clear_api_key") == "on",
+		UserID:           user.ID,
+		DisplayName:      r.FormValue("display_name"),
+		AvatarIcon:       parseAvatarIcon(r.FormValue("avatar_icon")),
+		OpenRouterAPIKey: r.FormValue("openrouter_api_key"),
+		ClearAPIKey:      r.FormValue("clear_api_key") == "on",
 	})
 	if err != nil {
 		data := s.accountViewData(r)
@@ -937,6 +902,8 @@ func teamErrorMessage(err error) string {
 		return "Escolha uma habilidade disponivel para cada Pokemon."
 	case errors.Is(err, ErrTransferLimit):
 		return "A janela semanal deste time ja foi usada. Uma nova troca abre no proximo domingo."
+	case errors.Is(err, ErrTransferTooLarge):
+		return "A janela semanal permite trocar apenas 1 Pokemon por vez."
 	default:
 		return "Nao foi possivel salvar a alteracao."
 	}

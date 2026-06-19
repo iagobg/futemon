@@ -30,23 +30,23 @@ func (p Pokemon) DisplayArtworkURL() string {
 }
 
 type User struct {
-	ID              string
-	GoogleID        string
-	DisplayName     string
-	Email           string
-	PictureURL      string
-	AvatarIcon      int
-	GeminiAPIKey    string
-	Role            string
-	HasGeminiAPIKey bool
+	ID                  string
+	GoogleID            string
+	DisplayName         string
+	Email               string
+	PictureURL          string
+	AvatarIcon          int
+	OpenRouterAPIKey    string
+	Role                string
+	HasOpenRouterAPIKey bool
 }
 
 type AccountInput struct {
-	UserID       string
-	DisplayName  string
-	AvatarIcon   int
-	GeminiAPIKey string
-	ClearAPIKey  bool
+	UserID           string
+	DisplayName      string
+	AvatarIcon       int
+	OpenRouterAPIKey string
+	ClearAPIKey      bool
 }
 
 type Team struct {

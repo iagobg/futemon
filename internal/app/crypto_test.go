@@ -14,11 +14,11 @@ func TestKeyCipherEncryptsAndDecrypts(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	encrypted, err := cipher.Encrypt("gemini-secret")
+	encrypted, err := cipher.Encrypt("openrouter-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if encrypted == "gemini-secret" || strings.Contains(encrypted, "gemini") {
+	if encrypted == "openrouter-secret" || strings.Contains(encrypted, "openrouter") {
 		t.Fatalf("encrypted payload leaked plaintext: %q", encrypted)
 	}
 
@@ -26,7 +26,7 @@ func TestKeyCipherEncryptsAndDecrypts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decrypted != "gemini-secret" {
+	if decrypted != "openrouter-secret" {
 		t.Fatalf("decrypted = %q", decrypted)
 	}
 }

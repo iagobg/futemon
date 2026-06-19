@@ -11,6 +11,9 @@ import (
 )
 
 func main() {
+	if err := app.LoadDotEnv(".env"); err != nil {
+		log.Fatalf("load .env: %v", err)
+	}
 	defaultDBPath := os.Getenv("FUTEMON_DB_PATH")
 	if defaultDBPath == "" {
 		defaultDBPath = "futemon.db"

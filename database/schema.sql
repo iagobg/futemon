@@ -1,6 +1,8 @@
 CREATE TABLE IF NOT EXISTS pokemons (
   id INTEGER PRIMARY KEY,
   name TEXT NOT NULL,
+  artwork_url TEXT NOT NULL DEFAULT '',
+  local_artwork_url TEXT NOT NULL DEFAULT '',
   type_1 TEXT NOT NULL,
   type_2 TEXT,
   hp INTEGER NOT NULL,
@@ -18,7 +20,9 @@ CREATE TABLE IF NOT EXISTS users (
   google_id TEXT UNIQUE NOT NULL,
   display_name TEXT NOT NULL,
   email TEXT NOT NULL,
-  gemini_api_key TEXT,
+  picture_url TEXT NOT NULL DEFAULT '',
+  avatar_icon INTEGER NOT NULL DEFAULT 0,
+  openrouter_api_key TEXT,
   role TEXT NOT NULL DEFAULT 'user',
   deleted_at TEXT
 );
@@ -28,10 +32,15 @@ CREATE TABLE IF NOT EXISTS teams (
   user_id TEXT NOT NULL REFERENCES users(id),
   name TEXT NOT NULL,
   goalkeeper_id INTEGER NOT NULL REFERENCES pokemons(id),
+  goalkeeper_ability TEXT NOT NULL DEFAULT '',
   fixo_id INTEGER NOT NULL REFERENCES pokemons(id),
+  fixo_ability TEXT NOT NULL DEFAULT '',
   ala_esquerda_id INTEGER NOT NULL REFERENCES pokemons(id),
+  ala_esquerda_ability TEXT NOT NULL DEFAULT '',
   ala_direita_id INTEGER NOT NULL REFERENCES pokemons(id),
+  ala_direita_ability TEXT NOT NULL DEFAULT '',
   pivo_id INTEGER NOT NULL REFERENCES pokemons(id),
+  pivo_ability TEXT NOT NULL DEFAULT '',
   is_frozen INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   deleted_at TEXT
@@ -42,10 +51,13 @@ CREATE TABLE IF NOT EXISTS matches (
   mode TEXT NOT NULL,
   team_a_id TEXT NOT NULL REFERENCES teams(id),
   team_b_id TEXT NOT NULL REFERENCES teams(id),
+  team_a_snapshot TEXT NOT NULL DEFAULT '{}',
+  team_b_snapshot TEXT NOT NULL DEFAULT '{}',
   score_a INTEGER,
   score_b INTEGER,
   raw_json_output TEXT NOT NULL DEFAULT '{}',
   start_time TEXT,
+  ended_at TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -79,4 +91,23 @@ CREATE TABLE IF NOT EXISTS tournament_registrations (
   team_id TEXT NOT NULL REFERENCES teams(id),
   consequences_log TEXT NOT NULL DEFAULT '',
   UNIQUE(tournament_id, team_id)
+);
+
+CREATE TABLE IF NOT EXISTS team_transactions (
+  id TEXT PRIMARY KEY,
+  team_id TEXT NOT NULL REFERENCES teams(id),
+  kind TEXT NOT NULL,
+  before_snapshot TEXT NOT NULL DEFAULT '{}',
+  after_snapshot TEXT NOT NULL DEFAULT '{}',
+  summary TEXT NOT NULL DEFAULT '',
+  window_start TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS duel_usage (
+  user_id TEXT NOT NULL REFERENCES users(id),
+  usage_date TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, usage_date)
 );

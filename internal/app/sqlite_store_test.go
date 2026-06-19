@@ -31,6 +31,19 @@ func TestSQLiteStoreSeedsDemoData(t *testing.T) {
 	}
 }
 
+func TestSQLiteStoreCreatesParentDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "app", "data", "futemon.db")
+	store, err := NewSQLiteStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, err := store.db.Exec("SELECT 1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSQLiteStoreSeedsDemoTeamsWhenPokemonAlreadyExist(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "futemon.db")
 	db, err := sql.Open("sqlite3", path)
@@ -129,7 +142,7 @@ func TestSQLiteStoreUpsertsGoogleUser(t *testing.T) {
 	}
 }
 
-func TestSQLiteStorePersistsLatestMatch(t *testing.T) {
+func TestSQLiteStorePersistsMatch(t *testing.T) {
 	store := newTestSQLiteStore(t)
 	defer store.Close()
 
@@ -143,11 +156,13 @@ func TestSQLiteStorePersistsLatestMatch(t *testing.T) {
 	}
 
 	match := SimulateMatch(teamA, teamB)
-	store.SetLatestMatch(match)
+	if err := store.SaveMatch(match); err != nil {
+		t.Fatal(err)
+	}
 
-	got, ok := store.LatestMatch()
+	got, ok := store.MatchByID(match.ID)
 	if !ok {
-		t.Fatal("latest match not found")
+		t.Fatal("match not found")
 	}
 	if got.ID != match.ID {
 		t.Fatalf("match id = %q, want %q", got.ID, match.ID)
@@ -189,7 +204,7 @@ func TestSQLiteStoreTeamHistoryUsesCompletedMatchesGoalsAndSnapshots(t *testing.
 		{Minute: 18, Type: "goal", TeamID: teamA.ID, PokemonID: teamA.AlaEsquerda.ID, Narrative: "Pikachu decide."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
 	})
-	store.SetLatestMatch(match)
+	store.SaveMatch(match)
 
 	_, err := store.SaveTeam(TeamInput{
 		ID:                 teamA.ID,
@@ -247,11 +262,11 @@ func TestSQLiteStoreGlobalTeamsBestSortsByWeightedRecord(t *testing.T) {
 	teamA, _ := store.FindTeam("team-kanto-press")
 	teamB, _ := store.FindTeam("team-paleta-bolada")
 	teamC, _ := store.FindTeam("team-ginasio-azul")
-	store.SetLatestMatch(completedTestMatch("match-win-1", teamA, teamB, []MatchEvent{
+	store.SaveMatch(completedTestMatch("match-win-1", teamA, teamB, []MatchEvent{
 		{Minute: 5, Type: "goal", TeamID: teamA.ID, PokemonID: teamA.Pivo.ID, Narrative: "Gol."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
 	}))
-	store.SetLatestMatch(completedTestMatch("match-win-2", teamA, teamC, []MatchEvent{
+	store.SaveMatch(completedTestMatch("match-win-2", teamA, teamC, []MatchEvent{
 		{Minute: 8, Type: "goal", TeamID: teamA.ID, PokemonID: teamA.AlaEsquerda.ID, Narrative: "Gol."},
 		{Minute: 12, Type: "goal", TeamID: teamA.ID, PokemonID: teamA.Pivo.ID, Narrative: "Gol."},
 		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
@@ -299,19 +314,19 @@ func TestSQLiteStoreCreatesUpdatesAndDeletesTeam(t *testing.T) {
 		Name:               "Teste Editado",
 		GoalkeeperID:       143,
 		GoalkeeperAbility:  "thick-fat",
-		FixoID:             95,
-		FixoAbility:        "sturdy",
-		AlaEsquerdaID:      26,
+		FixoID:             created.Fixo.ID,
+		FixoAbility:        created.FixoAbility,
+		AlaEsquerdaID:      created.AlaEsquerda.ID,
 		AlaEsquerdaAbility: "static",
-		AlaDireitaID:       7,
-		AlaDireitaAbility:  "torrent",
-		PivoID:             149,
-		PivoAbility:        "inner-focus",
+		AlaDireitaID:       created.AlaDireita.ID,
+		AlaDireitaAbility:  created.AlaDireitaAbility,
+		PivoID:             created.Pivo.ID,
+		PivoAbility:        created.PivoAbility,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Name != "Teste Editado" || updated.Goalkeeper.ID != 143 || updated.GoalkeeperAbility != "thick-fat" || updated.FixoAbility != "sturdy" {
+	if updated.Name != "Teste Editado" || updated.Goalkeeper.ID != 143 || updated.GoalkeeperAbility != "thick-fat" || updated.FixoAbility == "" {
 		t.Fatalf("updated team = %+v", updated)
 	}
 
@@ -376,6 +391,28 @@ func TestSQLiteStoreRecordsOriginalFormationAndLimitsWeeklyPokemonTransfer(t *te
 	}
 	if store.TransferWindow(team.ID).Used {
 		t.Fatal("fresh transfer window should not be used")
+	}
+
+	_, err := store.SaveTeam(TeamInput{
+		ID:                 team.ID,
+		UserID:             team.UserID,
+		Name:               team.Name,
+		GoalkeeperID:       team.Goalkeeper.ID,
+		GoalkeeperAbility:  team.GoalkeeperAbility,
+		FixoID:             95,
+		FixoAbility:        "sturdy",
+		AlaEsquerdaID:      team.AlaEsquerda.ID,
+		AlaEsquerdaAbility: team.AlaEsquerdaAbility,
+		AlaDireitaID:       team.AlaDireita.ID,
+		AlaDireitaAbility:  team.AlaDireitaAbility,
+		PivoID:             149,
+		PivoAbility:        "inner-focus",
+	})
+	if !errors.Is(err, ErrTransferTooLarge) {
+		t.Fatalf("multi Pokemon transfer err = %v, want ErrTransferTooLarge", err)
+	}
+	if store.TransferWindow(team.ID).Used {
+		t.Fatal("rejected transfer should not consume transfer window")
 	}
 
 	updated, err := store.SaveTeam(TeamInput{
@@ -551,10 +588,10 @@ func TestSQLiteStoreUpdatesAccountAndEncryptsAPIKey(t *testing.T) {
 	store.WithCipher(cipher)
 
 	user, err := store.UpdateAccount(AccountInput{
-		UserID:       demoUserID,
-		DisplayName:  "Treinador Atualizado",
-		AvatarIcon:   12,
-		GeminiAPIKey: "gemini-secret",
+		UserID:           demoUserID,
+		DisplayName:      "Treinador Atualizado",
+		AvatarIcon:       12,
+		OpenRouterAPIKey: "openrouter-secret",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -565,24 +602,24 @@ func TestSQLiteStoreUpdatesAccountAndEncryptsAPIKey(t *testing.T) {
 	if user.AvatarIcon != 12 {
 		t.Fatalf("avatar icon = %d", user.AvatarIcon)
 	}
-	if !user.HasGeminiAPIKey {
-		t.Fatal("expected Gemini key flag")
+	if !user.HasOpenRouterAPIKey {
+		t.Fatal("expected OpenRouter key flag")
 	}
-	if user.GeminiAPIKey == "gemini-secret" {
+	if user.OpenRouterAPIKey == "openrouter-secret" {
 		t.Fatal("API key was stored in plaintext")
 	}
-	decrypted, err := cipher.Decrypt(user.GeminiAPIKey)
+	decrypted, err := cipher.Decrypt(user.OpenRouterAPIKey)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if decrypted != "gemini-secret" {
+	if decrypted != "openrouter-secret" {
 		t.Fatalf("decrypted key = %q", decrypted)
 	}
 	apiKey, ok, err := store.UserAPIKey(demoUserID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ok || apiKey != "gemini-secret" {
+	if !ok || apiKey != "openrouter-secret" {
 		t.Fatalf("user api key = %q, ok %v", apiKey, ok)
 	}
 }
@@ -592,12 +629,40 @@ func TestSQLiteStoreRejectsAPIKeyWithoutCipher(t *testing.T) {
 	defer store.Close()
 
 	_, err := store.UpdateAccount(AccountInput{
-		UserID:       demoUserID,
-		DisplayName:  "Treinador Demo",
-		GeminiAPIKey: "gemini-secret",
+		UserID:           demoUserID,
+		DisplayName:      "Treinador Demo",
+		OpenRouterAPIKey: "openrouter-secret",
 	})
 	if !errors.Is(err, ErrEncryptionKeyRequired) {
 		t.Fatalf("err = %v, want ErrEncryptionKeyRequired", err)
+	}
+}
+
+func TestSQLiteStorePersistsDailyDuelUsage(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	defer store.Close()
+
+	date := "2026-06-19"
+	count, err := store.DailyDuelCount(demoUserID, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("initial duel usage = %d, want 0", count)
+	}
+
+	if err := store.RecordDailyDuel(demoUserID, date); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordDailyDuel(demoUserID, date); err != nil {
+		t.Fatal(err)
+	}
+	count, err = store.DailyDuelCount(demoUserID, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("duel usage = %d, want 2", count)
 	}
 }
 

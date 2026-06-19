@@ -17,8 +17,8 @@ FUTEMON_AUTH_MODE=local
 OPENROUTER_API_KEY=sk-or-...
 ENV_ENCRYPTION_KEY=12345678901234567890123456789012
 SESSION_SECRET=change-this-long-random-string
-FUTEMON_DB_PATH=/app/data/futemon.db
-FUTEMON_ARTWORK_DIR=/app/data/pokemon-artwork
+FUTEMON_DB_PATH=data/futemon.db
+FUTEMON_ARTWORK_DIR=data/pokemon-artwork
 ```
 
 Keys used in this quick start:
@@ -26,7 +26,8 @@ Keys used in this quick start:
 - `OPENROUTER_API_KEY`: create this in your OpenRouter account. It is the key used to call `openai/gpt-oss-120b:free` or whichever `OPENROUTER_MODEL` you configure.
 - `ENV_ENCRYPTION_KEY`: local app secret used to encrypt saved BYOK API keys in SQLite. Use either a raw 32-character string, a 32-byte base64 value, or a 32-byte hex value.
 - `SESSION_SECRET`: local app secret used to sign browser sessions. Use a long random string.
-- `FUTEMON_DB_PATH`: keep this as `/app/data/futemon.db` when running with Docker so migrations and the server use the same persistent volume.
+- `FUTEMON_DB_PATH`: keep this as `data/futemon.db` so local runs use `./data/futemon.db` and Docker uses `/app/data/futemon.db` through the container workdir.
+- Relative `data/...` paths are portable between local and Docker because the Docker image runs from `/app`.
 
 Build the Docker image:
 
@@ -58,14 +59,14 @@ docker run --rm \
 
 Open `http://localhost:8080`.
 
-The Docker image defaults to `FUTEMON_AUTH_MODE=local` and stores SQLite data at `/app/data/futemon.db`. In local auth mode the app uses the seeded demo user and does not require Google OAuth. This is intended for trusted/internal deployments.
+The Docker image defaults to `FUTEMON_AUTH_MODE=local`. With `FUTEMON_DB_PATH=data/futemon.db`, SQLite data is stored at `/app/data/futemon.db` in Docker and persists in the mounted `/app/data` volume. In local auth mode the app uses the seeded demo user and does not require Google OAuth. This is intended for trusted/internal deployments.
 
-If the seed prints `seeded #151 Mew` but the app still only shows the example Pokemon, check that your `.env` does not set `FUTEMON_DB_PATH=futemon.db`. In Docker it must point to `/app/data/futemon.db`.
+If the seed prints `seeded #151 Mew` but the app still only shows the example Pokemon, check that migrations and the server are using the same `FUTEMON_DB_PATH`. The recommended shared value is `data/futemon.db`.
 
 ## Server Flags
 
 ```sh
-go run ./cmd/server -auth-mode local -port 8080 -db futemon.db
+go run ./cmd/server -auth-mode local -port 8080 -db data/futemon.db
 ```
 
 Flags:
@@ -143,24 +144,33 @@ FUTEMON_DAILY_DUEL_LIMIT=1
 
 - In Google mode, users default to 1 completed duel per day.
 - In local mode, the default is `0`, meaning no local daily limit.
+- Daily duel usage is persisted in SQLite by user and UTC date.
 - Users can save their own OpenRouter key in account settings. When present, that BYOK key is used for duel generation and bypasses the local daily limit.
 - Saved BYOK API keys are OpenRouter API keys.
 - Saved API keys require `ENV_ENCRYPTION_KEY` to resolve to exactly 32 bytes so they can be encrypted at rest. Accepted formats are a raw 32-character string, `base64:<base64 value>`, or `hex:<64 hex characters>`.
+
+## Team Transfers
+
+- Each team has one weekly Pokemon transfer window.
+- A valid weekly transfer can change exactly one Pokemon. Team name and abilities can be edited together with that transfer.
+- Transfer usage is tracked in `team_transactions` by `window_start`, preserving the team's formation and transfer history.
 
 ## Data And Seeding
 
 The server creates and migrates the SQLite database automatically.
 
+The same relative `.env` paths work locally and in Docker. For the default setup, both commands below use `data/futemon.db`.
+
 To run the migration command manually:
 
 ```sh
-go run ./cmd/migrate --db futemon.db
+go run ./cmd/migrate
 ```
 
 Fetch Pokemon data and official artwork:
 
 ```sh
-go run ./cmd/migrate --db futemon.db --seed-pokemon --pokemon-limit 151
+go run ./cmd/migrate --seed-pokemon --pokemon-limit 151
 ```
 
 Artwork is served from:
