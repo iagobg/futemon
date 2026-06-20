@@ -67,7 +67,7 @@ func TestOpenRouterMatchGeneratorBuildsMatchFromStructuredResponse(t *testing.T)
 	if strings.Contains(requestBody.Messages[1].Content, "Kanto Press") || strings.Contains(requestBody.Messages[1].Content, "Paleta Bolada") || strings.Contains(requestBody.Messages[1].Content, "team-a") {
 		t.Fatalf("user-controlled team text leaked into prompt: %s", requestBody.Messages[1].Content)
 	}
-	if !strings.Contains(requestBody.Messages[1].Content, "key_matchups") {
+	if !strings.Contains(requestBody.Messages[1].Content, "phase_matchups") {
 		t.Fatalf("user prompt did not include matchup analysis: %s", requestBody.Messages[1].Content)
 	}
 	if match.ScoreTeamA != 1 || match.ScoreTeamB != 0 {
@@ -119,6 +119,16 @@ func TestOpenRouterMatchGeneratorDoesNotSendStrictSchemaByDefault(t *testing.T) 
 	}
 	if requestBody.ResponseFormat != nil {
 		t.Fatalf("response_format should be nil by default: %+v", requestBody.ResponseFormat)
+	}
+}
+
+func TestBuildMatchUserPromptIncludesAbilityDescription(t *testing.T) {
+	teamA, teamB := llmTestTeams()
+	teamA.Goalkeeper.Abilities = `[{"name":"torrent","description":"Powers up Water-type moves in a pinch."}]`
+
+	prompt := buildMatchUserPrompt(teamA, teamB, AnalyzeMatch(teamA, teamB))
+	if !strings.Contains(prompt, `"ability_description": "Powers up Water-type moves in a pinch."`) {
+		t.Fatalf("prompt did not include ability description: %s", prompt)
 	}
 }
 

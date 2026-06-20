@@ -268,20 +268,21 @@ type llmTeamPayload struct {
 }
 
 type llmPlayerPayload struct {
-	Position       string `json:"position"`
-	Ref            string `json:"ref"`
-	PokemonID      int    `json:"pokemon_id"`
-	Name           string `json:"name"`
-	Type1          string `json:"type_1"`
-	Type2          string `json:"type_2,omitempty"`
-	Ability        string `json:"ability"`
-	HP             int    `json:"hp"`
-	Attack         int    `json:"attack"`
-	Defense        int    `json:"defense"`
-	SpecialAttack  int    `json:"special_attack"`
-	SpecialDefense int    `json:"special_defense"`
-	Speed          int    `json:"speed"`
-	Description    string `json:"description,omitempty"`
+	Position           string `json:"position"`
+	Ref                string `json:"ref"`
+	PokemonID          int    `json:"pokemon_id"`
+	Name               string `json:"name"`
+	Type1              string `json:"type_1"`
+	Type2              string `json:"type_2,omitempty"`
+	Ability            string `json:"ability"`
+	AbilityDescription string `json:"ability_description,omitempty"`
+	HP                 int    `json:"hp"`
+	Attack             int    `json:"attack"`
+	Defense            int    `json:"defense"`
+	SpecialAttack      int    `json:"special_attack"`
+	SpecialDefense     int    `json:"special_defense"`
+	Speed              int    `json:"speed"`
+	Description        string `json:"description,omitempty"`
 }
 
 func llmTeam(team Team) llmTeamPayload {
@@ -297,25 +298,39 @@ func llmTeam(team Team) llmTeamPayload {
 	for _, player := range roster {
 		pokemon := player.Pokemon
 		positions = append(positions, llmPlayerPayload{
-			Position:       player.Position,
-			Ref:            refs[player.Position],
-			PokemonID:      pokemon.ID,
-			Name:           pokemonDisplayName(pokemon.Name),
-			Type1:          pokemon.Type1,
-			Type2:          pokemon.Type2,
-			Ability:        abilityDisplayName(player.Ability),
-			HP:             pokemon.HP,
-			Attack:         pokemon.Attack,
-			Defense:        pokemon.Defense,
-			SpecialAttack:  pokemon.SpecialAttack,
-			SpecialDefense: pokemon.SpecialDefense,
-			Speed:          pokemon.Speed,
-			Description:    pokemon.Description,
+			Position:           player.Position,
+			Ref:                refs[player.Position],
+			PokemonID:          pokemon.ID,
+			Name:               pokemonDisplayName(pokemon.Name),
+			Type1:              pokemon.Type1,
+			Type2:              pokemon.Type2,
+			Ability:            abilityDisplayName(player.Ability),
+			AbilityDescription: abilityDescription(pokemon, player.Ability),
+			HP:                 pokemon.HP,
+			Attack:             pokemon.Attack,
+			Defense:            pokemon.Defense,
+			SpecialAttack:      pokemon.SpecialAttack,
+			SpecialDefense:     pokemon.SpecialDefense,
+			Speed:              pokemon.Speed,
+			Description:        pokemon.Description,
 		})
 	}
 	return llmTeamPayload{
 		Positions: positions,
 	}
+}
+
+func abilityDescription(pokemon Pokemon, selected string) string {
+	selected = strings.TrimSpace(selected)
+	if selected == "" {
+		return ""
+	}
+	for _, ability := range pokemonAbilities(pokemon) {
+		if strings.EqualFold(ability.Name, selected) || strings.EqualFold(abilityDisplayName(ability.Name), selected) {
+			return strings.TrimSpace(ability.Description)
+		}
+	}
+	return ""
 }
 
 func extractJSONObject(content string) string {

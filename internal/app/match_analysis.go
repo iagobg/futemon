@@ -6,13 +6,15 @@ import (
 	"strings"
 )
 
+const typeInfluenceWeight = 0.50
+
 type ServerMatchContext struct {
 	Analysis MatchAnalysis `json:"analysis"`
 }
 
 type MatchAnalysis struct {
-	Overall     OverallMatchAnalysis `json:"overall"`
-	KeyMatchups []KeyMatchupAnalysis `json:"key_matchups"`
+	Overall       OverallMatchAnalysis   `json:"overall"`
+	PhaseMatchups []PhaseMatchupAnalysis `json:"phase_matchups"`
 }
 
 type OverallMatchAnalysis struct {
@@ -23,18 +25,14 @@ type OverallMatchAnalysis struct {
 	Summary    string  `json:"summary"`
 }
 
-type KeyMatchupAnalysis struct {
-	Label          string  `json:"label"`
-	TeamARef       string  `json:"team_a_ref"`
-	TeamBRef       string  `json:"team_b_ref"`
-	TeamAPokemon   string  `json:"team_a_pokemon"`
-	TeamBPokemon   string  `json:"team_b_pokemon"`
-	TeamAStatScore float64 `json:"team_a_stat_score"`
-	TeamBStatScore float64 `json:"team_b_stat_score"`
-	TeamATypeEdge  float64 `json:"team_a_type_edge"`
-	TeamBTypeEdge  float64 `json:"team_b_type_edge"`
-	Edge           string  `json:"edge"`
-	Summary        string  `json:"summary"`
+type PhaseMatchupAnalysis struct {
+	Label        string  `json:"label"`
+	AttackRef    string  `json:"attack_ref"`
+	DefenseRef   string  `json:"defense_ref"`
+	AttackScore  float64 `json:"attack_score"`
+	DefenseScore float64 `json:"defense_score"`
+	Advantage    string  `json:"advantage"`
+	Summary      string  `json:"summary"`
 }
 
 func BuildServerMatchContext(teamA Team, teamB Team) ServerMatchContext {
@@ -62,13 +60,9 @@ func AnalyzeMatch(teamA Team, teamB Team) MatchAnalysis {
 			Confidence: confidence,
 			Summary:    overallSummary(teamA, teamB, teamAPower, teamBPower, favorite, confidence),
 		},
-		KeyMatchups: []KeyMatchupAnalysis{
-			comparePlayers("Ala esquerda team_a vs ala direita team_b", "team_a.ala_esquerda", teamA.AlaEsquerda, "team_b.ala_direita", teamB.AlaDireita, "wing"),
-			comparePlayers("Ala direita team_a vs ala esquerda team_b", "team_a.ala_direita", teamA.AlaDireita, "team_b.ala_esquerda", teamB.AlaEsquerda, "wing"),
-			comparePlayers("Pivo team_a vs fixo team_b", "team_a.pivo", teamA.Pivo, "team_b.fixo", teamB.Fixo, "pivot_vs_fixo"),
-			comparePlayers("Pivo team_b vs fixo team_a", "team_b.pivo", teamB.Pivo, "team_a.fixo", teamA.Fixo, "pivot_vs_fixo"),
-			compareGoalkeeper("Goleiro team_a vs finalizadores team_b", "team_a.goleiro", teamA.Goalkeeper, "team_b.finalizadores", []Pokemon{teamB.AlaEsquerda, teamB.AlaDireita, teamB.Pivo}),
-			compareGoalkeeper("Goleiro team_b vs finalizadores team_a", "team_b.goleiro", teamB.Goalkeeper, "team_a.finalizadores", []Pokemon{teamA.AlaEsquerda, teamA.AlaDireita, teamA.Pivo}),
+		PhaseMatchups: []PhaseMatchupAnalysis{
+			comparePhaseMatchup("Ataque team_a vs defesa team_b", "team_a.attack", teamA, "team_b.defense", teamB),
+			comparePhaseMatchup("Ataque team_b vs defesa team_a", "team_b.attack", teamB, "team_a.defense", teamA),
 		},
 	}
 }
@@ -94,86 +88,77 @@ func positionPower(role string, pokemon Pokemon) float64 {
 	}
 }
 
-func comparePlayers(label string, refA string, pokemonA Pokemon, refB string, pokemonB Pokemon, role string) KeyMatchupAnalysis {
-	scoreA := positionPower(rolePowerRole(refA, role), pokemonA)
-	scoreB := positionPower(rolePowerRole(refB, role), pokemonB)
-	typeA := typeEffectiveness(pokemonA, pokemonB)
-	typeB := typeEffectiveness(pokemonB, pokemonA)
-	edge := matchupEdge(scoreA, scoreB, typeA, typeB)
-	return KeyMatchupAnalysis{
-		Label:          label,
-		TeamARef:       refA,
-		TeamBRef:       refB,
-		TeamAPokemon:   pokemonDisplayName(pokemonA.Name),
-		TeamBPokemon:   pokemonDisplayName(pokemonB.Name),
-		TeamAStatScore: round1(scoreA),
-		TeamBStatScore: round1(scoreB),
-		TeamATypeEdge:  typeA,
-		TeamBTypeEdge:  typeB,
-		Edge:           edge,
-		Summary:        matchupSummary(pokemonA, pokemonB, refA, refB, scoreA, scoreB, typeA, typeB, edge),
+func comparePhaseMatchup(label string, attackRef string, attackTeam Team, defenseRef string, defenseTeam Team) PhaseMatchupAnalysis {
+	attackers := []Pokemon{attackTeam.AlaEsquerda, attackTeam.AlaDireita, attackTeam.Pivo}
+	defenders := []Pokemon{defenseTeam.Fixo, defenseTeam.Goalkeeper}
+	attackScore := averagePositionPower([]positionPokemon{
+		{role: "wing", pokemon: attackTeam.AlaEsquerda},
+		{role: "wing", pokemon: attackTeam.AlaDireita},
+		{role: "pivo", pokemon: attackTeam.Pivo},
+	})
+	defenseScore := averagePositionPower([]positionPokemon{
+		{role: "fixo", pokemon: defenseTeam.Fixo},
+		{role: "goalkeeper", pokemon: defenseTeam.Goalkeeper},
+	})
+	typePressure := aggregateTypePressure(attackers, defenders)
+	advantage := phaseAdvantage(attackScore, defenseScore, typePressure)
+	return PhaseMatchupAnalysis{
+		Label:        label,
+		AttackRef:    attackRef,
+		DefenseRef:   defenseRef,
+		AttackScore:  round1(attackScore),
+		DefenseScore: round1(defenseScore),
+		Advantage:    advantage,
+		Summary:      phaseSummary(attackRef, defenseRef, attackScore, defenseScore, advantage),
 	}
 }
 
-func compareGoalkeeper(label string, keeperRef string, keeper Pokemon, attackersRef string, attackers []Pokemon) KeyMatchupAnalysis {
-	keeperScore := positionPower("goalkeeper", keeper)
-	var attackScore float64
-	var typePressure float64
-	var names []string
+type positionPokemon struct {
+	role    string
+	pokemon Pokemon
+}
+
+func averagePositionPower(players []positionPokemon) float64 {
+	if len(players) == 0 {
+		return 0
+	}
+	var total float64
+	for _, player := range players {
+		total += positionPower(player.role, player.pokemon)
+	}
+	return total / float64(len(players))
+}
+
+func aggregateTypePressure(attackers []Pokemon, defenders []Pokemon) float64 {
+	if len(attackers) == 0 || len(defenders) == 0 {
+		return 1
+	}
+	var total float64
+	var count int
 	for _, attacker := range attackers {
-		attackScore += positionPower("pivo", attacker)
-		typePressure += typeEffectiveness(attacker, keeper)
-		names = append(names, pokemonDisplayName(attacker.Name))
+		for _, defender := range defenders {
+			total += typeEffectiveness(attacker, defender)
+			count++
+		}
 	}
-	attackScore = attackScore / float64(len(attackers))
-	typePressure = round2(typePressure / float64(len(attackers)))
-	keeperEdge := round2(typeEffectiveness(keeper, attackers[0]))
-	edge := matchupEdge(keeperScore, attackScore, keeperEdge, typePressure)
-	summary := fmt.Sprintf("%s encara media ofensiva de %s; defesa/leitura %.1f contra pressao %.1f, pressao de tipo media %.2fx.", pokemonDisplayName(keeper.Name), strings.Join(names, ", "), keeperScore, attackScore, typePressure)
-	return KeyMatchupAnalysis{
-		Label:          label,
-		TeamARef:       keeperRef,
-		TeamBRef:       attackersRef,
-		TeamAPokemon:   pokemonDisplayName(keeper.Name),
-		TeamBPokemon:   strings.Join(names, ", "),
-		TeamAStatScore: round1(keeperScore),
-		TeamBStatScore: round1(attackScore),
-		TeamATypeEdge:  keeperEdge,
-		TeamBTypeEdge:  typePressure,
-		Edge:           edge,
-		Summary:        summary,
-	}
+	return round2(total / float64(count))
 }
 
-func rolePowerRole(ref string, fallback string) string {
-	switch {
-	case strings.Contains(ref, ".pivo"):
-		return "pivo"
-	case strings.Contains(ref, ".fixo"):
-		return "fixo"
-	case strings.Contains(ref, ".goleiro"):
-		return "goalkeeper"
-	default:
-		return fallback
-	}
-}
-
-func matchupEdge(scoreA float64, scoreB float64, typeA float64, typeB float64) string {
-	valueA := scoreA * (0.85 + (typeA * 0.15))
-	valueB := scoreB * (0.85 + (typeB * 0.15))
-	diff := valueA - valueB
-	threshold := math.Max(valueA, valueB) * 0.06
+func phaseAdvantage(attackScore float64, defenseScore float64, typePressure float64) string {
+	attackValue := attackScore * ((1 - typeInfluenceWeight) + (typePressure * typeInfluenceWeight))
+	diff := attackValue - defenseScore
+	threshold := math.Max(attackValue, defenseScore) * 0.06
 	if math.Abs(diff) <= threshold {
 		return "neutral"
 	}
 	if diff > 0 {
-		return "team_a"
+		return "attack"
 	}
-	return "team_b"
+	return "defense"
 }
 
-func matchupSummary(pokemonA Pokemon, pokemonB Pokemon, refA string, refB string, scoreA float64, scoreB float64, typeA float64, typeB float64, edge string) string {
-	return fmt.Sprintf("%s (%s) contra %s (%s): stats %.1f vs %.1f, tipos %.2fx vs %.2fx, vantagem %s.", pokemonDisplayName(pokemonA.Name), refA, pokemonDisplayName(pokemonB.Name), refB, scoreA, scoreB, typeA, typeB, edge)
+func phaseSummary(attackRef string, defenseRef string, attackScore float64, defenseScore float64, advantage string) string {
+	return fmt.Sprintf("%s contra %s: ataque %.1f vs defesa %.1f, vantagem %s.", attackRef, defenseRef, attackScore, defenseScore, advantage)
 }
 
 func overallSummary(teamA Team, teamB Team, powerA float64, powerB float64, favorite string, confidence string) string {
