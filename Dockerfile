@@ -22,9 +22,8 @@ COPY data /app/data
 ENV PORT=8080
 ENV FUTEMON_DB_PATH=/app/data/futemon.db
 ENV FUTEMON_ARTWORK_DIR=/app/data/pokemon-artwork
-ENV FUTEMON_AUTH_MODE=local
 
 EXPOSE 8080
 VOLUME ["/app/data"]
 
-CMD ["/app/futemon", "-auth-mode", "local"]
+CMD ["/app/futemon"]

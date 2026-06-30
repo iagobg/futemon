@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"html/template"
@@ -129,10 +130,19 @@ func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
 func (s *Server) requireUser(w http.ResponseWriter, r *http.Request) (User, bool) {
 	user, ok := s.currentUser(r)
 	if !ok {
+		if isHTMXRequest(r) {
+			w.Header().Set("HX-Redirect", "/")
+			http.Error(w, "Sessao expirada. Entre novamente para continuar.", http.StatusUnauthorized)
+			return User{}, false
+		}
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return User{}, false
 	}
 	return user, true
+}
+
+func isHTMXRequest(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("HX-Request"), "true")
 }
 
 func (s *Server) handleTeams(w http.ResponseWriter, r *http.Request) {
@@ -276,7 +286,8 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 	match, err := generator.GenerateMatch(r.Context(), teamA, teamB)
 	if err != nil {
 		log.Printf("generate duel failed: team_a=%s team_b=%s error=%v", teamA.ID, teamB.ID, err)
-		http.Error(w, "Nao foi possivel gerar a partida pela API. Veja o log do servidor para o erro exato.", http.StatusBadGateway)
+		status, message := duelGenerationErrorResponse(err, hasUserAPIKey)
+		http.Error(w, message, status)
 		return
 	}
 	if err := s.store.SaveMatch(match); err != nil {
@@ -319,6 +330,37 @@ func (l *DailyDuelLimiter) Record(store Store, userID string, now time.Time) err
 		return nil
 	}
 	return store.RecordDailyDuel(userID, duelUsageDate(now))
+}
+
+func duelGenerationErrorResponse(err error, hasUserAPIKey bool) (int, string) {
+	var openRouterErr *OpenRouterError
+	if errors.As(err, &openRouterErr) {
+		switch openRouterErr.StatusCode {
+		case http.StatusTooManyRequests:
+			if hasUserAPIKey {
+				return http.StatusTooManyRequests, "Sua chave OpenRouter atingiu um limite temporario. Tente novamente em alguns minutos ou revise seus limites no OpenRouter."
+			}
+			return http.StatusTooManyRequests, "O modelo gratuito do OpenRouter esta temporariamente limitado. Tente novamente em alguns minutos ou configure sua propria chave OpenRouter na conta."
+		case http.StatusRequestTimeout, http.StatusGatewayTimeout:
+			return http.StatusGatewayTimeout, "O OpenRouter demorou demais para responder. Tente novamente em instantes."
+		case http.StatusUnauthorized, http.StatusForbidden:
+			if hasUserAPIKey {
+				return http.StatusBadGateway, "A chave OpenRouter salva nao foi aceita. Atualize a chave na conta e tente novamente."
+			}
+			return http.StatusBadGateway, "A chave OpenRouter do app nao foi aceita. Avise o administrador ou configure sua propria chave na conta."
+		}
+		if openRouterErr.StatusCode >= 500 {
+			return http.StatusBadGateway, "O provedor de IA esta instavel no momento. Tente novamente em instantes."
+		}
+		return http.StatusBadGateway, "O OpenRouter rejeitou a geracao da partida. Tente novamente em instantes."
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return http.StatusGatewayTimeout, "O OpenRouter demorou demais para responder. Tente novamente em instantes."
+	}
+	if errors.Is(err, context.Canceled) {
+		return http.StatusGatewayTimeout, "A geracao da partida foi interrompida antes de terminar. Tente novamente."
+	}
+	return http.StatusBadGateway, "Nao foi possivel gerar a partida pela API. Tente novamente em instantes."
 }
 
 func normalizeAuthMode(value string) string {

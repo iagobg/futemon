@@ -59,7 +59,7 @@ docker run --rm \
 
 Open `http://localhost:8080`.
 
-The Docker image defaults to `FUTEMON_AUTH_MODE=local`. With `FUTEMON_DB_PATH=data/futemon.db`, SQLite data is stored at `/app/data/futemon.db` in Docker and persists in the mounted `/app/data` volume. In local auth mode the app uses the seeded demo user and does not require Google OAuth. This is intended for trusted/internal deployments.
+The sample `.env` opts into `FUTEMON_AUTH_MODE=local` for a trusted/internal setup. If `FUTEMON_AUTH_MODE` is absent or empty, the app defaults to Google auth. With `FUTEMON_DB_PATH=data/futemon.db`, SQLite data is stored at `/app/data/futemon.db` in Docker and persists in the mounted `/app/data` volume. In local auth mode the app uses the seeded demo user and does not require Google OAuth.
 
 If the seed prints `seeded #151 Mew` but the app still only shows the example Pokemon, check that migrations and the server are using the same `FUTEMON_DB_PATH`. The recommended shared value is `data/futemon.db`.
 

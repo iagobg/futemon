@@ -691,6 +691,27 @@
     errorEl.classList.add("hidden");
   }
 
+  function duelErrorMessage(xhr) {
+    const status = Number(xhr?.status || 0);
+    const raw = String(xhr?.responseText || "").trim();
+    const contentType = String(xhr?.getResponseHeader?.("Content-Type") || "").toLowerCase();
+    const looksLikeHTML = contentType.includes("text/html") || /^<!doctype\s+html/i.test(raw) || /^<html[\s>]/i.test(raw);
+
+    if (status === 401 || status === 403) {
+      return "Sessao expirada. Entre novamente para continuar.";
+    }
+    if (status === 429) {
+      return looksLikeHTML ? "Limite temporario atingido. Tente novamente em alguns minutos." : raw;
+    }
+    if (looksLikeHTML) {
+      if (status === 502 || status === 503 || status === 504) {
+        return "O servidor demorou demais para gerar a partida. Tente novamente em instantes.";
+      }
+      return "Nao foi possivel gerar a partida. Recarregue a pagina e tente novamente.";
+    }
+    return raw;
+  }
+
   function hydrate(root = document) {
     hydrateMatchPlayers(root);
     hydratePokemonPickers(root);
@@ -720,6 +741,6 @@
     const form = duelFormFor(event.target);
     if (!form) return;
     setDuelLoading(form, false);
-    showDuelError(form, event.detail?.xhr?.responseText);
+    showDuelError(form, duelErrorMessage(event.detail?.xhr));
   });
 })();

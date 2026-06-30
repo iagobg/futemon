@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -119,6 +120,34 @@ func TestOpenRouterMatchGeneratorDoesNotSendStrictSchemaByDefault(t *testing.T) 
 	}
 	if requestBody.ResponseFormat != nil {
 		t.Fatalf("response_format should be nil by default: %+v", requestBody.ResponseFormat)
+	}
+}
+
+func TestOpenRouterMatchGeneratorReturnsTypedHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"temporarily rate-limited upstream"}}`, http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+
+	promptPath := filepath.Join(t.TempDir(), "systemprompt.md")
+	if err := os.WriteFile(promptPath, []byte("Retorne JSON."), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	teamA, teamB := llmTestTeams()
+	generator := OpenRouterMatchGenerator{
+		APIKey:     "test-key",
+		BaseURL:    server.URL,
+		PromptPath: promptPath,
+		HTTPClient: server.Client(),
+	}
+	_, err := generator.GenerateMatch(context.Background(), teamA, teamB)
+	var openRouterErr *OpenRouterError
+	if !errors.As(err, &openRouterErr) {
+		t.Fatalf("error = %v, want OpenRouterError", err)
+	}
+	if openRouterErr.StatusCode != http.StatusTooManyRequests || !strings.Contains(openRouterErr.Body, "rate-limited") {
+		t.Fatalf("openrouter error = %+v", openRouterErr)
 	}
 }
 

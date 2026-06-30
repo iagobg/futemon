@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -264,6 +265,25 @@ func TestProtectedTeamsRedirectsWithoutSession(t *testing.T) {
 	}
 }
 
+func TestHTMXProtectedRouteReturnsUnauthorizedRedirectHint(t *testing.T) {
+	server := NewServer(NewMemoryStore())
+
+	req := httptest.NewRequest(http.MethodPost, "/duels/start", nil)
+	req.Header.Set("HX-Request", "true")
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("HTMX protected route status = %d, want 401", res.Code)
+	}
+	if got := res.Header().Get("HX-Redirect"); got != "/" {
+		t.Fatalf("HTMX protected route HX-Redirect = %q, want /", got)
+	}
+	if body := res.Body.String(); strings.Contains(body, "<!doctype html>") || !strings.Contains(body, "Sessao expirada") {
+		t.Fatalf("HTMX protected route body = %q", body)
+	}
+}
+
 func TestLocalAuthModeAllowsAccessWithoutSession(t *testing.T) {
 	t.Setenv("FUTEMON_AUTH_MODE", "local")
 	server := NewServer(NewMemoryStore())
@@ -372,6 +392,38 @@ func TestStartDuelAppliesDailyLimitWithoutBYOK(t *testing.T) {
 	}
 }
 
+func TestStartDuelReturnsFriendlyOpenRouterRateLimit(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	defer store.Close()
+	server := NewServer(store)
+	server.matchGenerator = errorMatchGenerator{err: &OpenRouterError{
+		StatusCode: http.StatusTooManyRequests,
+		Status:     "429 Too Many Requests",
+		Body:       `{"error":{"message":"Provider returned error","metadata":{"raw":"temporarily rate-limited upstream","user_id":"private"}}}`,
+	}}
+
+	form := url.Values{
+		"team_id":     {"team-kanto-press"},
+		"opponent_id": {"team-paleta-bolada"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/duels/start", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addSession(t, server, req, demoUserID)
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, req)
+
+	body := res.Body.String()
+	if res.Code != http.StatusTooManyRequests {
+		t.Fatalf("duel status = %d, want 429; body=%s", res.Code, body)
+	}
+	if !strings.Contains(body, "modelo gratuito do OpenRouter") {
+		t.Fatalf("duel rate-limit body = %q", body)
+	}
+	if strings.Contains(body, "private") || strings.Contains(body, "Provider returned error") {
+		t.Fatalf("duel rate-limit leaked upstream body: %q", body)
+	}
+}
+
 func TestStartDuelBypassesDailyLimitWithBYOK(t *testing.T) {
 	store := NewMemoryStore()
 	store.user.OpenRouterAPIKey = "user-openrouter-key"
@@ -400,6 +452,14 @@ func TestStartDuelBypassesDailyLimitWithBYOK(t *testing.T) {
 	if usedKey != "user-openrouter-key" {
 		t.Fatalf("BYOK key = %q", usedKey)
 	}
+}
+
+type errorMatchGenerator struct {
+	err error
+}
+
+func (g errorMatchGenerator) GenerateMatch(_ context.Context, _ Team, _ Team) (MatchResult, error) {
+	return MatchResult{}, g.err
 }
 
 func TestTeamHistoryPageLinksReplayAndRecap(t *testing.T) {

@@ -58,6 +58,24 @@ type OpenRouterMatchGenerator struct {
 	HTTPClient *http.Client
 }
 
+type OpenRouterError struct {
+	StatusCode int
+	Status     string
+	Body       string
+}
+
+func (e *OpenRouterError) Error() string {
+	status := strings.TrimSpace(e.Status)
+	if status == "" {
+		status = fmt.Sprintf("%d", e.StatusCode)
+	}
+	body := strings.TrimSpace(e.Body)
+	if body == "" {
+		return "openrouter returned " + status
+	}
+	return "openrouter returned " + status + ": " + body
+}
+
 func NewMatchGeneratorFromEnv() MatchGenerator {
 	local := LocalMatchGenerator{}
 	if os.Getenv("FUTEMON_LLM_DISABLED") == "1" {
@@ -180,7 +198,11 @@ func (g OpenRouterMatchGenerator) complete(ctx context.Context, systemPrompt str
 		return "", err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("openrouter returned %s: %s", resp.Status, strings.TrimSpace(string(responseBody)))
+		return "", &OpenRouterError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       strings.TrimSpace(string(responseBody)),
+		}
 	}
 	var parsed openRouterChatResponse
 	if err := json.Unmarshal(responseBody, &parsed); err != nil {
