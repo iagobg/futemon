@@ -30,7 +30,7 @@ func TestOpenRouterMatchGeneratorBuildsMatchFromStructuredResponse(t *testing.T)
 				{
 					"message": {
 						"role": "assistant",
-						"content": "{\"events\":[{\"minute\":0,\"type\":\"kickoff\",\"team_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"A bola fica parada no centro.\",\"narrative_resolution\":\"Comeca a partida.\"},{\"minute\":18,\"type\":\"goal\",\"team_ref\":\"team_a\",\"pokemon_ref\":\"pivo\",\"narrative_build_up\":\"Machamp gira sobre Onix e prepara o chute.\",\"narrative_resolution\":\"{goal} GOOOL do Kanto Press!\"},{\"minute\":20,\"type\":\"halftime\",\"team_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"O relogio chega ao intervalo.\",\"narrative_resolution\":\"Pausa para respirar.\"},{\"minute\":40,\"type\":\"fulltime\",\"team_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"O apito vai a boca.\",\"narrative_resolution\":\"Fim de jogo.\"}],\"consequences\":[]}"
+						"content": "{\"events\":[{\"minute\":0,\"type\":\"kickoff\",\"time_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"A bola fica parada no centro.\",\"narrative_resolution\":\"Comeca a partida.\"},{\"minute\":18,\"type\":\"goal\",\"time_ref\":\"time_da_casa\",\"pokemon_ref\":\"pivo\",\"narrative_build_up\":\"Machamp gira sobre Onix e prepara o chute.\",\"narrative_resolution\":\"{goal} GOOOL do Time da Casa!\"},{\"minute\":20,\"type\":\"halftime\",\"time_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"O relogio chega ao intervalo.\",\"narrative_resolution\":\"Pausa para respirar.\"},{\"minute\":40,\"type\":\"fulltime\",\"time_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"O apito vai a boca.\",\"narrative_resolution\":\"Fim de jogo.\"}],\"consequences\":[]}"
 					}
 				}
 			]
@@ -62,13 +62,13 @@ func TestOpenRouterMatchGeneratorBuildsMatchFromStructuredResponse(t *testing.T)
 	if requestBody.ResponseFormat["type"] != "json_schema" {
 		t.Fatalf("response_format = %+v", requestBody.ResponseFormat)
 	}
-	if len(requestBody.Messages) != 2 || !strings.Contains(requestBody.Messages[1].Content, "team_a") || !strings.Contains(requestBody.Messages[1].Content, "server_analysis") {
+	if len(requestBody.Messages) != 2 || !strings.Contains(requestBody.Messages[1].Content, "time_da_casa") || !strings.Contains(requestBody.Messages[1].Content, "analise_do_servidor") {
 		t.Fatalf("messages = %+v", requestBody.Messages)
 	}
-	if strings.Contains(requestBody.Messages[1].Content, "Kanto Press") || strings.Contains(requestBody.Messages[1].Content, "Paleta Bolada") || strings.Contains(requestBody.Messages[1].Content, "team-a") {
+	if strings.Contains(requestBody.Messages[1].Content, "Kanto Press") || strings.Contains(requestBody.Messages[1].Content, "Paleta Bolada") || strings.Contains(requestBody.Messages[1].Content, "team-a") || strings.Contains(requestBody.Messages[1].Content, "team_a") {
 		t.Fatalf("user-controlled team text leaked into prompt: %s", requestBody.Messages[1].Content)
 	}
-	if !strings.Contains(requestBody.Messages[1].Content, "phase_matchups") {
+	if !strings.Contains(requestBody.Messages[1].Content, "confrontos") || !strings.Contains(requestBody.Messages[1].Content, "dinamica_da_partida") {
 		t.Fatalf("user prompt did not include matchup analysis: %s", requestBody.Messages[1].Content)
 	}
 	if match.ScoreTeamA != 1 || match.ScoreTeamB != 0 {
@@ -94,7 +94,7 @@ func TestOpenRouterMatchGeneratorDoesNotSendStrictSchemaByDefault(t *testing.T) 
 				{
 					"message": {
 						"role": "assistant",
-						"content": "{\"events\":[{\"minute\":0,\"type\":\"kickoff\",\"team_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"A bola fica parada.\",\"narrative_resolution\":\"Comeca.\"},{\"minute\":20,\"type\":\"halftime\",\"team_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"Intervalo chegando.\",\"narrative_resolution\":\"Pausa.\"},{\"minute\":40,\"type\":\"fulltime\",\"team_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"Apito pronto.\",\"narrative_resolution\":\"Fim.\"}],\"consequences\":[]}"
+						"content": "{\"events\":[{\"minute\":0,\"type\":\"kickoff\",\"time_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"A bola fica parada.\",\"narrative_resolution\":\"Comeca.\"},{\"minute\":20,\"type\":\"halftime\",\"time_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"Intervalo chegando.\",\"narrative_resolution\":\"Pausa.\"},{\"minute\":40,\"type\":\"fulltime\",\"time_ref\":null,\"pokemon_ref\":null,\"narrative_build_up\":\"Apito pronto.\",\"narrative_resolution\":\"Fim.\"}],\"consequences\":[]}"
 					}
 				}
 			]
@@ -159,8 +159,37 @@ func TestBuildMatchUserPromptIncludesAbilityDescription(t *testing.T) {
 	if !strings.Contains(prompt, `"ability_description": "Powers up Water-type moves in a pinch."`) {
 		t.Fatalf("prompt did not include ability description: %s", prompt)
 	}
-	if !strings.Contains(prompt, `"team_a_power_index"`) || !strings.Contains(prompt, `"power_gap_percent"`) {
+	if !strings.Contains(prompt, `"indice_time_da_casa"`) || !strings.Contains(prompt, `"diferenca_percentual_forca"`) {
 		t.Fatalf("prompt did not include normalized power context: %s", prompt)
+	}
+	if !strings.Contains(prompt, `"dinamica_da_partida"`) || !strings.Contains(prompt, `"faixa_total_gols_sugerida"`) {
+		t.Fatalf("prompt did not include match dynamics: %s", prompt)
+	}
+	if !strings.Contains(prompt, `"chance_de_zebra"`) || !strings.Contains(prompt, `"sorteio"`) || !strings.Contains(prompt, `"probabilidade_percentual"`) {
+		t.Fatalf("prompt did not include structured upset chance: %s", prompt)
+	}
+}
+
+func TestBuildMatchDynamicsIncludesStructuredUpsetSignal(t *testing.T) {
+	teamA, teamB := llmTestTeams()
+	analysis := AnalyzeMatch(teamA, teamB)
+	dynamics := BuildMatchDynamics(analysis)
+	if dynamics.ChanceDeZebra.Sorteio == "" || dynamics.ChanceDeZebra.NivelBase == "" {
+		t.Fatalf("upset signal missing fields: %+v", dynamics.ChanceDeZebra)
+	}
+	if dynamics.ChanceDeZebra.Sorteio == "nao_aplicavel" {
+		return
+	}
+	if dynamics.ChanceDeZebra.Beneficiado != "time_da_casa" && dynamics.ChanceDeZebra.Beneficiado != "time_visitante" {
+		t.Fatalf("upset beneficiary = %q", dynamics.ChanceDeZebra.Beneficiado)
+	}
+	if dynamics.ChanceDeZebra.ProbabilidadePercentual < 3 || dynamics.ChanceDeZebra.ProbabilidadePercentual > 50 {
+		t.Fatalf("upset probability = %d", dynamics.ChanceDeZebra.ProbabilidadePercentual)
+	}
+	switch dynamics.ChanceDeZebra.Sorteio {
+	case "ativada", "latente":
+	default:
+		t.Fatalf("upset draw = %q", dynamics.ChanceDeZebra.Sorteio)
 	}
 }
 
@@ -171,6 +200,9 @@ func TestMatchResponseFormatUsesPortugueseGoalkeeperRef(t *testing.T) {
 	}
 	if strings.Contains(string(data), "goalkeeper") {
 		t.Fatalf("response format should not expose goalkeeper ref: %s", string(data))
+	}
+	if strings.Contains(string(data), "team_a") || strings.Contains(string(data), "team_b") || !strings.Contains(string(data), "time_ref") || !strings.Contains(string(data), "time_da_casa") {
+		t.Fatalf("response format should expose Portuguese team refs only: %s", string(data))
 	}
 }
 

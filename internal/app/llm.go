@@ -271,18 +271,219 @@ func resolveDataPath(relativePath string) string {
 
 func buildMatchUserPrompt(teamA Team, teamB Team, analysis MatchAnalysis) string {
 	payload := struct {
-		Instruction    string         `json:"instruction"`
-		TeamA          llmTeamPayload `json:"team_a"`
-		TeamB          llmTeamPayload `json:"team_b"`
-		ServerAnalysis MatchAnalysis  `json:"server_analysis"`
+		Instrucao         string         `json:"instrucao"`
+		TimeDaCasa        llmTeamPayload `json:"time_da_casa"`
+		TimeVisitante     llmTeamPayload `json:"time_visitante"`
+		AnaliseServidor   MatchAnalysis  `json:"analise_do_servidor"`
+		DinamicaDaPartida MatchDynamics  `json:"dinamica_da_partida"`
 	}{
-		Instruction:    "Simule e narre esta partida de futsal Pokemon usando exatamente o formato JSON definido no system prompt. Use server_analysis como contexto factual, mas voce ainda decide o roteiro, placar e resultado.",
-		TeamA:          llmTeam(teamA),
-		TeamB:          llmTeam(teamB),
-		ServerAnalysis: analysis,
+		Instrucao:         "Simule e narre esta partida de futsal Pokemon usando exatamente o formato JSON definido no prompt de sistema. Use analise_do_servidor como expectativa no papel e dinamica_da_partida como contexto de variancia; voce ainda decide roteiro, placar e resultado.",
+		TimeDaCasa:        llmTeam(teamA),
+		TimeVisitante:     llmTeam(teamB),
+		AnaliseServidor:   analysis,
+		DinamicaDaPartida: BuildMatchDynamics(analysis),
 	}
 	data, _ := json.MarshalIndent(payload, "", "  ")
 	return string(data)
+}
+
+type MatchDynamics struct {
+	Ritmo                 string            `json:"ritmo"`
+	Volatilidade          string            `json:"volatilidade"`
+	VariacaoFinalizacao   string            `json:"variacao_finalizacao"`
+	InfluenciaDosGoleiros string            `json:"influencia_dos_goleiros"`
+	ChanceDeZebra         UpsetChanceSignal `json:"chance_de_zebra"`
+	FaixaTotalGols        string            `json:"faixa_total_gols_sugerida"`
+	Orientacao            string            `json:"orientacao"`
+}
+
+type UpsetChanceSignal struct {
+	NivelBase               string `json:"nivel_base"`
+	ProbabilidadePercentual int    `json:"probabilidade_percentual"`
+	Sorteio                 string `json:"sorteio"`
+	Beneficiado             string `json:"beneficiado"`
+	CaminhoProvavel         string `json:"caminho_provavel"`
+	Orientacao              string `json:"orientacao"`
+}
+
+func BuildMatchDynamics(analysis MatchAnalysis) MatchDynamics {
+	homeAttack := phaseAdvantageFor(analysis, "ataque_time_da_casa")
+	awayAttack := phaseAdvantageFor(analysis, "ataque_time_visitante")
+	tempo := chooseTempo(homeAttack, awayAttack)
+	volatility := chooseVolatility(analysis.Overall.Confidence)
+	finishing := chooseOne([]string{"desperdicadora", "normal", "clinica", "caotica"})
+	goalkeepers := chooseOne([]string{"normal", "goleiros_em_destaque", "goleiros_inseguros", "um_goleiro_decisivo"})
+	return MatchDynamics{
+		Ritmo:                 tempo,
+		Volatilidade:          volatility,
+		VariacaoFinalizacao:   finishing,
+		InfluenciaDosGoleiros: goalkeepers,
+		ChanceDeZebra:         buildUpsetChance(analysis, tempo, volatility, finishing, goalkeepers),
+		FaixaTotalGols:        suggestedGoalBand(tempo, volatility, finishing, goalkeepers),
+		Orientacao:            "Esta dinamica nao fixa placar. Ela descreve o clima provavel da partida; gols, viradas, empate ou zebra devem nascer dos eventos narrados.",
+	}
+}
+
+func phaseAdvantageFor(analysis MatchAnalysis, attackRef string) string {
+	for _, matchup := range analysis.PhaseMatchups {
+		if matchup.AttackRef == attackRef {
+			return matchup.Advantage
+		}
+	}
+	return "neutro"
+}
+
+func chooseTempo(homeAttack string, awayAttack string) string {
+	switch {
+	case homeAttack == "ataque" && awayAttack == "ataque":
+		return chooseOne([]string{"aberto", "frenetico"})
+	case homeAttack == "defesa" && awayAttack == "defesa":
+		return chooseOne([]string{"travado", "controlado"})
+	default:
+		return chooseOne([]string{"equilibrado", "aberto", "controlado"})
+	}
+}
+
+func chooseVolatility(confidence string) string {
+	switch confidence {
+	case "equilibrado":
+		return chooseOne([]string{"media", "alta", "alta"})
+	case "leve":
+		return chooseOne([]string{"media", "media", "alta"})
+	case "claro":
+		return chooseOne([]string{"baixa", "media", "alta"})
+	default:
+		return chooseOne([]string{"baixa", "media"})
+	}
+}
+
+func buildUpsetChance(analysis MatchAnalysis, tempo string, volatility string, finishing string, goalkeepers string) UpsetChanceSignal {
+	underdog := underdogRef(analysis.Overall.Favorite)
+	if underdog == "" {
+		return UpsetChanceSignal{
+			NivelBase:               "neutra",
+			ProbabilidadePercentual: 0,
+			Sorteio:                 "nao_aplicavel",
+			Beneficiado:             "",
+			CaminhoProvavel:         "sem_zebra_clara",
+			Orientacao:              "Nao ha zebra clara quando a analise no papel esta equilibrada.",
+		}
+	}
+	baseLevel, probability := baseUpsetChance(analysis.Overall.Confidence)
+	if volatility == "alta" {
+		probability += 8
+	}
+	if volatility == "baixa" {
+		probability -= 4
+	}
+	if finishing == "desperdicadora" {
+		probability += 5
+	}
+	if goalkeepers == "um_goleiro_decisivo" {
+		probability += 6
+	}
+	if favoriteAttackAdvantage(analysis) {
+		probability -= 4
+	}
+	probability = clampInt(probability, 3, 50)
+	roll, err := randomIndex(100)
+	if err != nil {
+		roll = int(time.Now().UnixNano() % 100)
+	}
+	draw := "latente"
+	if roll+1 <= probability {
+		draw = "ativada"
+	}
+	return UpsetChanceSignal{
+		NivelBase:               baseLevel,
+		ProbabilidadePercentual: probability,
+		Sorteio:                 draw,
+		Beneficiado:             underdog,
+		CaminhoProvavel:         upsetPath(tempo, finishing, goalkeepers),
+		Orientacao:              "Mesmo quando ativada, a zebra nao e obrigatoria. Use como abertura narrativa para o azar do favorito ou eficiencia do azarado.",
+	}
+}
+
+func underdogRef(favorite string) string {
+	switch favorite {
+	case "time_da_casa":
+		return "time_visitante"
+	case "time_visitante":
+		return "time_da_casa"
+	default:
+		return ""
+	}
+}
+
+func baseUpsetChance(confidence string) (string, int) {
+	switch confidence {
+	case "equilibrado":
+		return "viva", 40
+	case "leve":
+		return "possivel", 28
+	case "claro":
+		return "rara", 16
+	default:
+		return "muito_rara", 7
+	}
+}
+
+func favoriteAttackAdvantage(analysis MatchAnalysis) bool {
+	switch analysis.Overall.Favorite {
+	case "time_da_casa":
+		return phaseAdvantageFor(analysis, "ataque_time_da_casa") == "ataque"
+	case "time_visitante":
+		return phaseAdvantageFor(analysis, "ataque_time_visitante") == "ataque"
+	default:
+		return false
+	}
+}
+
+func upsetPath(tempo string, finishing string, goalkeepers string) string {
+	switch {
+	case goalkeepers == "um_goleiro_decisivo" || goalkeepers == "goleiros_em_destaque":
+		return "goleiro_carrega"
+	case finishing == "desperdicadora":
+		return "favorito_desperdica_chances"
+	case tempo == "frenetico" || tempo == "aberto":
+		return chooseOne([]string{"contra_ataque", "eficiencia_em_poucas_chances"})
+	default:
+		return chooseOne([]string{"bola_parada", "erro_individual", "eficiencia_em_poucas_chances"})
+	}
+}
+
+func suggestedGoalBand(tempo string, volatility string, finishing string, goalkeepers string) string {
+	if finishing == "desperdicadora" || goalkeepers == "goleiros_em_destaque" {
+		return chooseOne([]string{"0_a_2", "1_a_3", "2_a_4"})
+	}
+	if tempo == "frenetico" || (tempo == "aberto" && volatility == "alta") || finishing == "caotica" {
+		return chooseOne([]string{"3_a_6", "4_a_8"})
+	}
+	if tempo == "travado" || tempo == "controlado" {
+		return chooseOne([]string{"0_a_2", "1_a_3"})
+	}
+	return chooseOne([]string{"1_a_3", "2_a_4", "3_a_5"})
+}
+
+func clampInt(value int, min int, max int) int {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
+}
+
+func chooseOne(options []string) string {
+	if len(options) == 0 {
+		return ""
+	}
+	index, err := randomIndex(len(options))
+	if err != nil {
+		index = int(time.Now().UnixNano() % int64(len(options)))
+	}
+	return options[index]
 }
 
 type llmTeamPayload struct {
@@ -384,20 +585,20 @@ func matchResponseFormat() map[string]any {
 					"events": map[string]any{
 						"type":     "array",
 						"minItems": 5,
-						"maxItems": 10,
+						"maxItems": 16,
 						"items": map[string]any{
 							"type":                 "object",
 							"additionalProperties": false,
-							"required":             []string{"minute", "type", "team_ref", "pokemon_ref", "narrative_build_up", "narrative_resolution"},
+							"required":             []string{"minute", "type", "time_ref", "pokemon_ref", "narrative_build_up", "narrative_resolution"},
 							"properties": map[string]any{
 								"minute": map[string]any{"type": "integer", "minimum": 0, "maximum": 40},
 								"type": map[string]any{
 									"type": "string",
 									"enum": []string{"kickoff", "close_chance", "foul", "goal", "injury", "halftime", "fulltime"},
 								},
-								"team_ref": map[string]any{
+								"time_ref": map[string]any{
 									"type": stringOrNull,
-									"enum": []any{"team_a", "team_b", nil},
+									"enum": []any{"time_da_casa", "time_visitante", nil},
 								},
 								"pokemon_ref": map[string]any{
 									"type": stringOrNull,
@@ -413,11 +614,11 @@ func matchResponseFormat() map[string]any {
 						"items": map[string]any{
 							"type":                 "object",
 							"additionalProperties": false,
-							"required":             []string{"team_ref", "pokemon_ref", "effect_description"},
+							"required":             []string{"time_ref", "pokemon_ref", "effect_description"},
 							"properties": map[string]any{
-								"team_ref": map[string]any{
+								"time_ref": map[string]any{
 									"type": "string",
-									"enum": []string{"team_a", "team_b"},
+									"enum": []string{"time_da_casa", "time_visitante"},
 								},
 								"pokemon_ref": map[string]any{
 									"type": "string",

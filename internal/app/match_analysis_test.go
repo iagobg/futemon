@@ -66,8 +66,8 @@ func TestAnalyzeMatchIncludesOverallAndPhaseMatchups(t *testing.T) {
 		t.Fatalf("phase matchup count = %d", len(analysis.PhaseMatchups))
 	}
 	expectedRefs := [][2]string{
-		{"team_a.attack", "team_b.defense"},
-		{"team_b.attack", "team_a.defense"},
+		{"ataque_time_da_casa", "defesa_time_visitante"},
+		{"ataque_time_visitante", "defesa_time_da_casa"},
 	}
 	for i, matchup := range analysis.PhaseMatchups {
 		if matchup.AttackRef != expectedRefs[i][0] || matchup.DefenseRef != expectedRefs[i][1] {
@@ -77,7 +77,7 @@ func TestAnalyzeMatchIncludesOverallAndPhaseMatchups(t *testing.T) {
 			t.Fatalf("phase matchup[%d] missing fields = %+v", i, matchup)
 		}
 		switch matchup.Advantage {
-		case "attack", "defense", "neutral":
+		case "ataque", "defesa", "neutro":
 		default:
 			t.Fatalf("phase matchup[%d] advantage = %q", i, matchup.Advantage)
 		}
@@ -85,11 +85,11 @@ func TestAnalyzeMatchIncludesOverallAndPhaseMatchups(t *testing.T) {
 }
 
 func TestPhaseAdvantageUsesStrongTypeInfluence(t *testing.T) {
-	if got := phaseAdvantage(100, 130, 2); got != "attack" {
-		t.Fatalf("phase advantage = %q, want attack", got)
+	if got := phaseAdvantage(100, 130, 2); got != "ataque" {
+		t.Fatalf("phase advantage = %q, want ataque", got)
 	}
-	if got := phaseAdvantage(100, 100, 1); got != "neutral" {
-		t.Fatalf("neutral phase advantage = %q, want neutral", got)
+	if got := phaseAdvantage(100, 100, 1); got != "neutro" {
+		t.Fatalf("neutral phase advantage = %q, want neutro", got)
 	}
 }
 

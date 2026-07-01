@@ -25,11 +25,13 @@ type SimulationEvent struct {
 	Narrative           string `json:"narrative,omitempty"`
 	NarrativeBuildUp    string `json:"narrative_build_up,omitempty"`
 	NarrativeResolution string `json:"narrative_resolution,omitempty"`
+	TimeRef             string `json:"time_ref,omitempty"`
 	TeamRef             string `json:"team_ref,omitempty"`
 	PokemonRef          string `json:"pokemon_ref,omitempty"`
 }
 
 type SimulationConsequence struct {
+	TimeRef           string `json:"time_ref,omitempty"`
 	TeamRef           string `json:"team_ref"`
 	PokemonRef        string `json:"pokemon_ref"`
 	EffectDescription string `json:"effect_description"`
@@ -123,6 +125,8 @@ func renderSimulationText(teamA Team, teamB Team, text string) string {
 	}
 	appendTeamReplacements("team_a", teamA)
 	appendTeamReplacements("team_b", teamB)
+	appendTeamReplacements("time_da_casa", teamA)
+	appendTeamReplacements("time_visitante", teamB)
 	return strings.NewReplacer(replacements...).Replace(text)
 }
 
@@ -135,10 +139,11 @@ func normalizeSimulationPayload(payload *SimulationPayload) {
 		payload.Events[i].NarrativeBuildUp = normalizeTeamNamePlaceholders(payload.Events[i].NarrativeBuildUp)
 		payload.Events[i].NarrativeResolution = normalizeTeamNamePlaceholders(payload.Events[i].NarrativeResolution)
 		payload.Events[i].Type = strings.TrimSpace(payload.Events[i].Type)
-		payload.Events[i].TeamRef = normalizeNullableRef(payload.Events[i].TeamRef)
+		payload.Events[i].TeamRef = normalizeTeamRef(payload.Events[i].TeamRef, payload.Events[i].TimeRef)
 		payload.Events[i].PokemonRef = normalizeNullableRef(payload.Events[i].PokemonRef)
 	}
 	for i := range payload.Consequences {
+		payload.Consequences[i].TeamRef = normalizeTeamRef(payload.Consequences[i].TeamRef, payload.Consequences[i].TimeRef)
 		payload.Consequences[i].EffectDescription = normalizeTeamNamePlaceholders(payload.Consequences[i].EffectDescription)
 	}
 	sort.SliceStable(payload.Events, func(i int, j int) bool {
@@ -147,8 +152,8 @@ func normalizeSimulationPayload(payload *SimulationPayload) {
 }
 
 var (
-	teamANameReferencePattern = regexp.MustCompile(`(?i)\b(?:time|team)\s+a\b|\bteam_a\b`)
-	teamBNameReferencePattern = regexp.MustCompile(`(?i)\b(?:time|team)\s+b\b|\bteam_b\b`)
+	teamANameReferencePattern = regexp.MustCompile(`(?i)\b(?:time|team|equipe)\s+a\b|\bteam_a\b|\btime_da_casa\b|\btime\s+da\s+casa\b|\bequipe\s+da\s+casa\b`)
+	teamBNameReferencePattern = regexp.MustCompile(`(?i)\b(?:time|team|equipe)\s+b\b|\bteam_b\b|\btime_visitante\b|\btime\s+visitante\b|\bequipe\s+visitante\b`)
 )
 
 func normalizeTeamNamePlaceholders(text string) string {
@@ -226,12 +231,27 @@ func normalizeNullableRef(value string) string {
 	return value
 }
 
+func normalizeTeamRef(values ...string) string {
+	for _, value := range values {
+		value = normalizeNullableRef(value)
+		switch value {
+		case "time_da_casa":
+			return "team_a"
+		case "time_visitante":
+			return "team_b"
+		case "team_a", "team_b":
+			return value
+		}
+	}
+	return ""
+}
+
 func resolveSimulationRefs(teamA Team, teamB Team, teamRef string, pokemonRef string) (string, int) {
 	team := Team{}
 	switch teamRef {
-	case "team_a":
+	case "team_a", "time_da_casa":
 		team = teamA
-	case "team_b":
+	case "team_b", "time_visitante":
 		team = teamB
 	default:
 		return "", 0

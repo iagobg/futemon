@@ -13,29 +13,29 @@ type ServerMatchContext struct {
 }
 
 type MatchAnalysis struct {
-	Overall       OverallMatchAnalysis   `json:"overall"`
-	PhaseMatchups []PhaseMatchupAnalysis `json:"phase_matchups"`
+	Overall       OverallMatchAnalysis   `json:"geral"`
+	PhaseMatchups []PhaseMatchupAnalysis `json:"confrontos"`
 }
 
 type OverallMatchAnalysis struct {
-	TeamAPower      float64 `json:"team_a_power"`
-	TeamBPower      float64 `json:"team_b_power"`
-	TeamAPowerIndex float64 `json:"team_a_power_index"`
-	TeamBPowerIndex float64 `json:"team_b_power_index"`
-	PowerGapPercent float64 `json:"power_gap_percent"`
-	Favorite        string  `json:"favorite"`
-	Confidence      string  `json:"confidence"`
-	Summary         string  `json:"summary"`
+	TeamAPower      float64 `json:"forca_time_da_casa"`
+	TeamBPower      float64 `json:"forca_time_visitante"`
+	TeamAPowerIndex float64 `json:"indice_time_da_casa"`
+	TeamBPowerIndex float64 `json:"indice_time_visitante"`
+	PowerGapPercent float64 `json:"diferenca_percentual_forca"`
+	Favorite        string  `json:"favorito_no_papel"`
+	Confidence      string  `json:"confianca"`
+	Summary         string  `json:"resumo"`
 }
 
 type PhaseMatchupAnalysis struct {
-	Label        string  `json:"label"`
-	AttackRef    string  `json:"attack_ref"`
-	DefenseRef   string  `json:"defense_ref"`
-	AttackScore  float64 `json:"attack_score"`
-	DefenseScore float64 `json:"defense_score"`
-	Advantage    string  `json:"advantage"`
-	Summary      string  `json:"summary"`
+	Label        string  `json:"rotulo"`
+	AttackRef    string  `json:"ataque_ref"`
+	DefenseRef   string  `json:"defesa_ref"`
+	AttackScore  float64 `json:"nota_ataque"`
+	DefenseScore float64 `json:"nota_defesa"`
+	Advantage    string  `json:"vantagem"`
+	Summary      string  `json:"resumo"`
 }
 
 func BuildServerMatchContext(teamA Team, teamB Team) ServerMatchContext {
@@ -49,12 +49,12 @@ func AnalyzeMatch(teamA Team, teamB Team) MatchAnalysis {
 	teamBPower := teamPower(teamB)
 	teamAPowerIndex, teamBPowerIndex := powerIndexes(teamAPower, teamBPower)
 	gapPercent := powerGapPercent(teamAPower, teamBPower)
-	favorite := "draw"
+	favorite := "empate"
 	if teamAPower > teamBPower {
-		favorite = "team_a"
+		favorite = "time_da_casa"
 	}
 	if teamBPower > teamAPower {
-		favorite = "team_b"
+		favorite = "time_visitante"
 	}
 	confidence := confidenceLabel(teamAPower, teamBPower)
 	return MatchAnalysis{
@@ -69,8 +69,8 @@ func AnalyzeMatch(teamA Team, teamB Team) MatchAnalysis {
 			Summary:         overallSummary(teamA, teamB, teamAPower, teamBPower, teamAPowerIndex, teamBPowerIndex, gapPercent, favorite, confidence),
 		},
 		PhaseMatchups: []PhaseMatchupAnalysis{
-			comparePhaseMatchup("Ataque team_a vs defesa team_b", "team_a.attack", teamA, "team_b.defense", teamB),
-			comparePhaseMatchup("Ataque team_b vs defesa team_a", "team_b.attack", teamB, "team_a.defense", teamA),
+			comparePhaseMatchup("Ataque do Time da Casa vs defesa do Time Visitante", "ataque_time_da_casa", teamA, "defesa_time_visitante", teamB),
+			comparePhaseMatchup("Ataque do Time Visitante vs defesa do Time da Casa", "ataque_time_visitante", teamB, "defesa_time_da_casa", teamA),
 		},
 	}
 }
@@ -157,12 +157,12 @@ func phaseAdvantage(attackScore float64, defenseScore float64, typePressure floa
 	diff := attackValue - defenseScore
 	threshold := math.Max(attackValue, defenseScore) * 0.06
 	if math.Abs(diff) <= threshold {
-		return "neutral"
+		return "neutro"
 	}
 	if diff > 0 {
-		return "attack"
+		return "ataque"
 	}
-	return "defense"
+	return "defesa"
 }
 
 func phaseSummary(attackRef string, defenseRef string, attackScore float64, defenseScore float64, advantage string) string {
@@ -170,7 +170,7 @@ func phaseSummary(attackRef string, defenseRef string, attackScore float64, defe
 }
 
 func overallSummary(teamA Team, teamB Team, powerA float64, powerB float64, indexA float64, indexB float64, gapPercent float64, favorite string, confidence string) string {
-	return fmt.Sprintf("team_a %.1f (indice %.1f) vs %.1f (indice %.1f) team_b; diferenca %.1f%%; favorito: %s (%s).", powerA, indexA, powerB, indexB, gapPercent, favorite, confidence)
+	return fmt.Sprintf("Time da Casa %.1f (indice %.1f) vs %.1f (indice %.1f) Time Visitante; diferenca %.1f%%; favorito no papel: %s (%s).", powerA, indexA, powerB, indexB, gapPercent, favorite, confidence)
 }
 
 func powerIndexes(powerA float64, powerB float64) (float64, float64) {
