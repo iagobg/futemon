@@ -401,7 +401,7 @@ func matchResponseFormat() map[string]any {
 								},
 								"pokemon_ref": map[string]any{
 									"type": stringOrNull,
-									"enum": []any{"goleiro", "goalkeeper", "fixo", "ala_esquerda", "ala_direita", "pivo", nil},
+									"enum": []any{"goleiro", "fixo", "ala_esquerda", "ala_direita", "pivo", nil},
 								},
 								"narrative_build_up":   map[string]any{"type": "string", "minLength": 1},
 								"narrative_resolution": map[string]any{"type": "string", "minLength": 1},
@@ -421,7 +421,7 @@ func matchResponseFormat() map[string]any {
 								},
 								"pokemon_ref": map[string]any{
 									"type": "string",
-									"enum": []string{"goleiro", "goalkeeper", "fixo", "ala_esquerda", "ala_direita", "pivo"},
+									"enum": []string{"goleiro", "fixo", "ala_esquerda", "ala_direita", "pivo"},
 								},
 								"effect_description": map[string]any{"type": "string", "minLength": 1},
 							},

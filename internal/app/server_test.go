@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func addSession(t *testing.T, server *Server, req *http.Request, userID string) {
@@ -329,10 +330,40 @@ func TestDuelsPageRendersLoadingFeedback(t *testing.T) {
 		t.Fatalf("GET /duels status = %d", res.Code)
 	}
 	body := res.Body.String()
-	for _, want := range []string{"data-duel-form", "data-duel-loading", "Aguardando o narrador montar a partida", "data-duel-error"} {
+	for _, want := range []string{"data-duel-form", "data-duel-loading", "Aguardando o narrador montar a partida", "Sair desta pagina cancela a geracao", "data-duel-cancel-warning", "data-duel-error"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("duels page missing %q: %s", want, body)
 		}
+	}
+	if strings.Contains(body, `name="opponent_id" value="team-paleta-bolada"`) {
+		t.Fatalf("random duel button should not submit a fixed opponent: %s", body)
+	}
+}
+
+func TestStartDuelWithoutOpponentChoosesAvailableGlobalOpponent(t *testing.T) {
+	store := NewMemoryStore()
+	teamA := store.globalTeams[0]
+	teamC := store.globalTeams[2]
+	store.myTeams = []Team{teamA}
+	store.globalTeams = []Team{teamA, teamC}
+	generator := &captureMatchGenerator{}
+	server := NewServer(store)
+	server.matchGenerator = generator
+
+	form := url.Values{
+		"team_id": {teamA.ID},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/duels/start", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addSession(t, server, req, demoUserID)
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, req)
+
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("duel status = %d, body=%s", res.Code, res.Body.String())
+	}
+	if generator.teamB.ID != teamC.ID {
+		t.Fatalf("random opponent = %q, want %q", generator.teamB.ID, teamC.ID)
 	}
 }
 
@@ -422,6 +453,41 @@ func TestStartDuelReturnsFriendlyOpenRouterRateLimit(t *testing.T) {
 	if strings.Contains(body, "private") || strings.Contains(body, "Provider returned error") {
 		t.Fatalf("duel rate-limit leaked upstream body: %q", body)
 	}
+	count, err := store.DailyDuelCount(demoUserID, duelUsageDate(time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("duel usage after provider failure = %d, want refunded to 0", count)
+	}
+}
+
+func TestStartDuelKeepsDailyLimitWhenUserCancelsRequest(t *testing.T) {
+	store := newTestSQLiteStore(t)
+	defer store.Close()
+	server := NewServer(store)
+	server.matchGenerator = errorMatchGenerator{err: context.Canceled}
+
+	form := url.Values{
+		"team_id":     {"team-kanto-press"},
+		"opponent_id": {"team-paleta-bolada"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/duels/start", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	addSession(t, server, req, demoUserID)
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, req)
+
+	if res.Code != http.StatusGatewayTimeout {
+		t.Fatalf("duel status = %d, want 504; body=%s", res.Code, res.Body.String())
+	}
+	count, err := store.DailyDuelCount(demoUserID, duelUsageDate(time.Now()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("duel usage after user cancellation = %d, want 1", count)
+	}
 }
 
 func TestStartDuelBypassesDailyLimitWithBYOK(t *testing.T) {
@@ -460,6 +526,19 @@ type errorMatchGenerator struct {
 
 func (g errorMatchGenerator) GenerateMatch(_ context.Context, _ Team, _ Team) (MatchResult, error) {
 	return MatchResult{}, g.err
+}
+
+type captureMatchGenerator struct {
+	teamA Team
+	teamB Team
+}
+
+func (g *captureMatchGenerator) GenerateMatch(_ context.Context, teamA Team, teamB Team) (MatchResult, error) {
+	g.teamA = teamA
+	g.teamB = teamB
+	return completedTestMatch("match-captured-duel", teamA, teamB, []MatchEvent{
+		{Minute: 40, Type: "fulltime", Narrative: "Fim."},
+	}), nil
 }
 
 func TestTeamHistoryPageLinksReplayAndRecap(t *testing.T) {

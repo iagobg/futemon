@@ -664,6 +664,29 @@ func TestSQLiteStorePersistsDailyDuelUsage(t *testing.T) {
 	if count != 2 {
 		t.Fatalf("duel usage = %d, want 2", count)
 	}
+	if err := store.RefundDailyDuel(demoUserID, date); err != nil {
+		t.Fatal(err)
+	}
+	count, err = store.DailyDuelCount(demoUserID, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("duel usage after refund = %d, want 1", count)
+	}
+	if err := store.RefundDailyDuel(demoUserID, date); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RefundDailyDuel(demoUserID, date); err != nil {
+		t.Fatal(err)
+	}
+	count, err = store.DailyDuelCount(demoUserID, date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("duel usage after extra refund = %d, want 0", count)
+	}
 }
 
 func validAbilityInput(input TeamInput) TeamInput {

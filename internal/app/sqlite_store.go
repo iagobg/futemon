@@ -458,6 +458,17 @@ func (s *SQLiteStore) RecordDailyDuel(userID string, date string) error {
 	return err
 }
 
+func (s *SQLiteStore) RefundDailyDuel(userID string, date string) error {
+	_, err := s.db.Exec(`
+		UPDATE duel_usage
+		SET count = MAX(count - 1, 0),
+			updated_at = ?
+		WHERE user_id = ? AND usage_date = ?`,
+		formatTime(time.Now().UTC()), userID, date,
+	)
+	return err
+}
+
 func (s *SQLiteStore) UpsertGoogleUser(profile GoogleProfile) (User, error) {
 	profile.DisplayName = strings.TrimSpace(profile.DisplayName)
 	profile.Email = strings.TrimSpace(profile.Email)

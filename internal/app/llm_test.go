@@ -159,6 +159,19 @@ func TestBuildMatchUserPromptIncludesAbilityDescription(t *testing.T) {
 	if !strings.Contains(prompt, `"ability_description": "Powers up Water-type moves in a pinch."`) {
 		t.Fatalf("prompt did not include ability description: %s", prompt)
 	}
+	if !strings.Contains(prompt, `"team_a_power_index"`) || !strings.Contains(prompt, `"power_gap_percent"`) {
+		t.Fatalf("prompt did not include normalized power context: %s", prompt)
+	}
+}
+
+func TestMatchResponseFormatUsesPortugueseGoalkeeperRef(t *testing.T) {
+	data, err := json.Marshal(matchResponseFormat())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "goalkeeper") {
+		t.Fatalf("response format should not expose goalkeeper ref: %s", string(data))
+	}
 }
 
 func TestOpenRouterTimeoutUsesEnvOrDefault(t *testing.T) {

@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"html/template"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -245,16 +247,23 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	teamAID := r.FormValue("team_id")
 	teamBID := r.FormValue("opponent_id")
-	if teamBID == "" {
-		teamBID = "team-paleta-bolada"
+	if r.FormValue("duel_mode") == "random" {
+		teamBID = ""
 	}
 
 	teamA, okA := s.store.FindTeam(teamAID)
-	teamB, okB := s.store.FindTeam(teamBID)
 	if okA && teamA.UserID != user.ID {
 		okA = false
 	}
-	if !okA || !okB {
+	if !okA {
+		http.Error(w, "time nao encontrado", http.StatusBadRequest)
+		return
+	}
+	if teamBID == "" {
+		teamBID = s.randomOpponentID(teamA, user.ID)
+	}
+	teamB, okB := s.store.FindTeam(teamBID)
+	if !okB {
 		http.Error(w, "time nao encontrado", http.StatusBadRequest)
 		return
 	}
@@ -266,6 +275,7 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	consumedDailyDuel := false
 	if !hasUserAPIKey {
 		canUse, err := s.duelLimiter.CanUse(s.store, user.ID, now)
 		if err != nil {
@@ -277,6 +287,12 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Limite diario de duelos atingido. Configure uma chave OpenRouter na conta para usar BYOK.", http.StatusTooManyRequests)
 			return
 		}
+		if err := s.duelLimiter.Record(s.store, user.ID, now); err != nil {
+			log.Printf("record duel usage failed: user=%s error=%v", user.ID, err)
+			http.Error(w, "Nao foi possivel registrar o limite diario.", http.StatusInternalServerError)
+			return
+		}
+		consumedDailyDuel = true
 	}
 
 	generator := s.matchGenerator
@@ -286,24 +302,58 @@ func (s *Server) handleStartDuel(w http.ResponseWriter, r *http.Request) {
 	match, err := generator.GenerateMatch(r.Context(), teamA, teamB)
 	if err != nil {
 		log.Printf("generate duel failed: team_a=%s team_b=%s error=%v", teamA.ID, teamB.ID, err)
+		if consumedDailyDuel && shouldRefundDuelGenerationError(err) {
+			s.refundDailyDuel(user.ID, now)
+		}
 		status, message := duelGenerationErrorResponse(err, hasUserAPIKey)
 		http.Error(w, message, status)
 		return
 	}
 	if err := s.store.SaveMatch(match); err != nil {
 		log.Printf("save duel failed: match=%s error=%v", match.ID, err)
+		if consumedDailyDuel {
+			s.refundDailyDuel(user.ID, now)
+		}
 		http.Error(w, "A partida foi gerada, mas nao foi possivel salva-la.", http.StatusInternalServerError)
 		return
 	}
-	if !hasUserAPIKey {
-		if err := s.duelLimiter.Record(s.store, user.ID, now); err != nil {
-			log.Printf("record duel usage failed: user=%s error=%v", user.ID, err)
-			http.Error(w, "A partida foi salva, mas nao foi possivel registrar o limite diario.", http.StatusInternalServerError)
-			return
-		}
-	}
 	w.Header().Set("HX-Redirect", "/match/"+match.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) refundDailyDuel(userID string, now time.Time) {
+	if err := s.duelLimiter.Refund(s.store, userID, now); err != nil {
+		log.Printf("refund duel usage failed: user=%s error=%v", userID, err)
+	}
+}
+
+func (s *Server) randomOpponentID(teamA Team, userID string) string {
+	var candidates []Team
+	for _, team := range s.store.GlobalTeams("recent") {
+		if team.ID == "" || strings.EqualFold(team.ID, teamA.ID) || strings.EqualFold(team.UserID, userID) {
+			continue
+		}
+		candidates = append(candidates, team)
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	index, err := randomIndex(len(candidates))
+	if err != nil {
+		index = int(time.Now().UnixNano() % int64(len(candidates)))
+	}
+	return candidates[index].ID
+}
+
+func randomIndex(max int) (int, error) {
+	if max <= 0 {
+		return 0, errors.New("max must be positive")
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64()), nil
 }
 
 type DailyDuelLimiter struct {
@@ -330,6 +380,17 @@ func (l *DailyDuelLimiter) Record(store Store, userID string, now time.Time) err
 		return nil
 	}
 	return store.RecordDailyDuel(userID, duelUsageDate(now))
+}
+
+func (l *DailyDuelLimiter) Refund(store Store, userID string, now time.Time) error {
+	if l == nil || l.limit <= 0 {
+		return nil
+	}
+	return store.RefundDailyDuel(userID, duelUsageDate(now))
+}
+
+func shouldRefundDuelGenerationError(err error) bool {
+	return !errors.Is(err, context.Canceled)
 }
 
 func duelGenerationErrorResponse(err error, hasUserAPIKey bool) (int, string) {

@@ -3,6 +3,7 @@
   const syncTimers = new WeakMap();
   const visibleByEvent = new Map();
   const celebratedGoalEvents = new Set();
+  let pendingDuelRequests = 0;
   let serverClockOffsetMs = 0;
   let serverClockObserved = false;
   let pendingOffsetCorrectionMs = 0;
@@ -668,6 +669,29 @@
     return el?.closest?.("[data-duel-form]");
   }
 
+  function duelCancelWarning() {
+    return document.querySelector("[data-duel-form]")?.dataset.duelCancelWarning || "Sair desta pagina cancelara a geracao do duelo.";
+  }
+
+  function updateDuelUnloadWarning() {
+    document.body.toggleAttribute("data-duel-request-pending", pendingDuelRequests > 0);
+  }
+
+  function beginDuelRequest() {
+    pendingDuelRequests += 1;
+    updateDuelUnloadWarning();
+  }
+
+  function endDuelRequest() {
+    pendingDuelRequests = Math.max(0, pendingDuelRequests - 1);
+    updateDuelUnloadWarning();
+  }
+
+  function clearDuelRequests() {
+    pendingDuelRequests = 0;
+    updateDuelUnloadWarning();
+  }
+
   function setDuelLoading(form, loading) {
     if (!form) return;
     form.classList.toggle("is-loading", loading);
@@ -729,12 +753,19 @@
   document.body.addEventListener("htmx:beforeRequest", (event) => {
     const form = duelFormFor(event.target);
     if (!form) return;
+    beginDuelRequest();
     clearDuelError(form);
     setDuelLoading(form, true);
+  });
+  document.body.addEventListener("htmx:beforeOnLoad", (event) => {
+    const redirectURL = event.detail?.xhr?.getResponseHeader?.("HX-Redirect");
+    if (!redirectURL || pendingDuelRequests <= 0) return;
+    clearDuelRequests();
   });
   document.body.addEventListener("htmx:afterRequest", (event) => {
     const form = duelFormFor(event.target);
     if (!form) return;
+    endDuelRequest();
     setDuelLoading(form, false);
   });
   document.body.addEventListener("htmx:responseError", (event) => {
@@ -742,5 +773,12 @@
     if (!form) return;
     setDuelLoading(form, false);
     showDuelError(form, duelErrorMessage(event.detail?.xhr));
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (pendingDuelRequests <= 0) return;
+    const message = duelCancelWarning();
+    event.preventDefault();
+    event.returnValue = message;
+    return message;
   });
 })();

@@ -115,7 +115,6 @@ func renderSimulationText(teamA Team, teamB Team, text string) string {
 		replacements = append(replacements,
 			"{{"+prefix+".name}}", team.Name,
 			"{{"+prefix+".goleiro}}", pokemonDisplayName(team.Goalkeeper.Name),
-			"{{"+prefix+".goalkeeper}}", pokemonDisplayName(team.Goalkeeper.Name),
 			"{{"+prefix+".fixo}}", pokemonDisplayName(team.Fixo.Name),
 			"{{"+prefix+".ala_esquerda}}", pokemonDisplayName(team.AlaEsquerda.Name),
 			"{{"+prefix+".ala_direita}}", pokemonDisplayName(team.AlaDireita.Name),
@@ -241,8 +240,6 @@ func resolveSimulationRefs(teamA Team, teamB Team, teamRef string, pokemonRef st
 	pokemonID := 0
 	switch pokemonRef {
 	case "goleiro":
-		pokemonID = team.Goalkeeper.ID
-	case "goalkeeper":
 		pokemonID = team.Goalkeeper.ID
 	case "fixo":
 		pokemonID = team.Fixo.ID

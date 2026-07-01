@@ -56,6 +56,9 @@ func TestAnalyzeMatchIncludesOverallAndPhaseMatchups(t *testing.T) {
 	if analysis.Overall.TeamAPower <= 0 || analysis.Overall.TeamBPower <= 0 {
 		t.Fatalf("overall powers = %+v", analysis.Overall)
 	}
+	if analysis.Overall.TeamAPowerIndex <= 0 || analysis.Overall.TeamBPowerIndex <= 0 || analysis.Overall.PowerGapPercent < 0 {
+		t.Fatalf("overall normalized powers = %+v", analysis.Overall)
+	}
 	if analysis.Overall.Favorite == "" || analysis.Overall.Summary == "" {
 		t.Fatalf("overall missing favorite or summary = %+v", analysis.Overall)
 	}
@@ -87,5 +90,15 @@ func TestPhaseAdvantageUsesStrongTypeInfluence(t *testing.T) {
 	}
 	if got := phaseAdvantage(100, 100, 1); got != "neutral" {
 		t.Fatalf("neutral phase advantage = %q, want neutral", got)
+	}
+}
+
+func TestPowerIndexesNormalizeAroundOneHundred(t *testing.T) {
+	indexA, indexB := powerIndexes(1500, 1600)
+	if round1(indexA) != 96.8 || round1(indexB) != 103.2 {
+		t.Fatalf("power indexes = %.4f %.4f", indexA, indexB)
+	}
+	if got := round1(powerGapPercent(1500, 1600)); got != 6.7 {
+		t.Fatalf("power gap percent = %.1f, want 6.7", got)
 	}
 }

@@ -47,6 +47,7 @@ type Store interface {
 	SaveMatch(match MatchResult) error
 	DailyDuelCount(userID string, date string) (int, error)
 	RecordDailyDuel(userID string, date string) error
+	RefundDailyDuel(userID string, date string) error
 }
 
 type MemoryStore struct {
@@ -430,6 +431,14 @@ func (s *MemoryStore) DailyDuelCount(userID string, date string) (int, error) {
 
 func (s *MemoryStore) RecordDailyDuel(userID string, date string) error {
 	s.duelUsage[userID+"|"+date]++
+	return nil
+}
+
+func (s *MemoryStore) RefundDailyDuel(userID string, date string) error {
+	key := userID + "|" + date
+	if s.duelUsage[key] > 0 {
+		s.duelUsage[key]--
+	}
 	return nil
 }
 

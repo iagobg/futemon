@@ -321,25 +321,25 @@
 
 {{ define "duels" }}
 <section class="grid gap-6 lg:grid-cols-[420px_1fr]">
-  <form data-duel-form hx-post="/duels/start" class="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
+  <form data-duel-form data-duel-cancel-warning="Sair desta pagina cancelara a geracao do duelo." hx-post="/duels/start" class="rounded-lg border border-zinc-800 bg-zinc-900 p-4">
     <h1 class="text-2xl font-bold">Duelos</h1>
     <p class="mt-1 text-sm text-zinc-400">{{ if .User.HasOpenRouterAPIKey }}BYOK OpenRouter ativo. Duelos sem limite diario local.{{ else }}1/1 duelo disponivel hoje. BYOK desativa esse limite.{{ end }}</p>
     <div data-duel-error class="mt-4 hidden rounded-md border border-red-500 bg-red-950 px-3 py-2 text-sm text-red-100"></div>
     <div data-duel-loading class="mt-4 items-center gap-3 rounded-md border border-lime-500 bg-lime-950 px-3 py-2 text-sm text-lime-100">
       <span class="h-4 w-4 animate-spin rounded-full border-2 border-lime-200 border-t-transparent"></span>
-      <span>Aguardando o narrador montar a partida...</span>
+      <span>Aguardando o narrador montar a partida. Sair desta pagina cancela a geracao.</span>
     </div>
     <label class="mt-5 block text-sm">Seu time
       <select name="team_id" class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2">
         {{ range .Teams }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
       </select>
     </label>
-    <button name="opponent_id" value="team-paleta-bolada" class="mt-4 w-full rounded-md bg-lime-300 px-4 py-2 font-semibold text-zinc-950">Buscar Duelo Aleatorio</button>
+    <button name="duel_mode" value="random" class="mt-4 w-full rounded-md bg-lime-300 px-4 py-2 font-semibold text-zinc-950">Buscar Duelo Aleatorio</button>
     <div class="mt-5 border-t border-zinc-800 pt-5">
       <label class="block text-sm">ID do time adversario
         <input name="opponent_id" placeholder="team-paleta-bolada" class="mt-1 w-full rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2">
       </label>
-      <button class="mt-3 w-full rounded-md border border-lime-300 px-4 py-2 font-semibold text-lime-200">Desafiar por ID</button>
+      <button name="duel_mode" value="challenge" class="mt-3 w-full rounded-md border border-lime-300 px-4 py-2 font-semibold text-lime-200">Desafiar por ID</button>
     </div>
   </form>
 
