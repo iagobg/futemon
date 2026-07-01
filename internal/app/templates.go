@@ -2,7 +2,7 @@ package app
 
 import "embed"
 
-//go:embed templates/*.html static/*.js
+//go:embed templates/*.html static/*.js static/*.css
 var embeddedFiles embed.FS
 
 func mustReadEmbeddedText(path string) string {

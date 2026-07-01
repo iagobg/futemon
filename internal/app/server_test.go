@@ -845,6 +845,41 @@ func TestStaticAppJS(t *testing.T) {
 	}
 }
 
+func TestStaticAppCSS(t *testing.T) {
+	server := NewServer(NewMemoryStore())
+
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/static/app.css", nil))
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET /static/app.css status = %d", res.Code)
+	}
+	if contentType := res.Header().Get("Content-Type"); !strings.Contains(contentType, "text/css") {
+		t.Fatalf("content type = %q", contentType)
+	}
+	css := res.Body.String()
+	if !strings.Contains(css, ".bg-zinc-950") || !strings.Contains(css, ".text-lime-300") {
+		t.Fatal("app.css did not include expected Tailwind utilities")
+	}
+}
+
+func TestLayoutUsesLocalTailwindCSS(t *testing.T) {
+	server := NewServer(NewMemoryStore())
+
+	req := httptest.NewRequest(http.MethodGet, "/teams", nil)
+	addSession(t, server, req, demoUserID)
+	res := httptest.NewRecorder()
+	server.Routes().ServeHTTP(res, req)
+
+	body := res.Body.String()
+	if !strings.Contains(body, `href="/static/app.css"`) {
+		t.Fatalf("layout did not load local app.css: %s", body)
+	}
+	if strings.Contains(body, "cdn.tailwindcss.com") {
+		t.Fatalf("layout still loads Tailwind CDN: %s", body)
+	}
+}
+
 func TestAdminRequiresAdminRole(t *testing.T) {
 	store := NewMemoryStore()
 	store.user.Role = "user"

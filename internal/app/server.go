@@ -97,6 +97,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/auth/google", s.handleGoogleLogin)
 	mux.HandleFunc("/auth/google/callback", s.handleGoogleCallback)
 	mux.HandleFunc("/auth/logout", s.handleLogout)
+	mux.HandleFunc("/static/app.css", s.handleAsset)
 	mux.HandleFunc("/static/app.js", s.handleAsset)
 	mux.HandleFunc("/static/trainer-icons.png", s.handleTrainerIcons)
 	mux.Handle("/static/pokemon-artwork/", s.pokemonArtworkHandler())

@@ -102,6 +102,18 @@ SESSION_SECRET=change-this-long-random-string
 
 Google mode is the default when `FUTEMON_AUTH_MODE` is absent.
 
+## Frontend Assets
+
+The app serves compiled Tailwind CSS from `/static/app.css`.
+
+```sh
+npm install
+npm run build:css
+```
+
+Run `npm run build:css` after changing template classes or Tailwind config.
+Docker builds run this step automatically.
+
 ## LLM And OpenRouter
 
 Create an API key in OpenRouter and set it as:
