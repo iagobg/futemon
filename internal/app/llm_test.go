@@ -46,7 +46,7 @@ func TestOpenRouterMatchGeneratorBuildsMatchFromStructuredResponse(t *testing.T)
 	teamA, teamB := llmTestTeams()
 	generator := OpenRouterMatchGenerator{
 		APIKey:     "test-key",
-		Model:      "openai/gpt-oss-120b:free",
+		Model:      "meta-llama/llama-3.3-70b-instruct:free",
 		BaseURL:    server.URL,
 		PromptPath: promptPath,
 		StrictJSON: true,
@@ -110,7 +110,7 @@ func TestOpenRouterMatchGeneratorDoesNotSendStrictSchemaByDefault(t *testing.T) 
 	teamA, teamB := llmTestTeams()
 	generator := OpenRouterMatchGenerator{
 		APIKey:     "test-key",
-		Model:      "openai/gpt-oss-120b:free",
+		Model:      "meta-llama/llama-3.3-70b-instruct:free",
 		BaseURL:    server.URL,
 		PromptPath: promptPath,
 		HTTPClient: server.Client(),

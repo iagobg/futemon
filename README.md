@@ -125,7 +125,7 @@ OPENROUTER_API_KEY=sk-or-...
 Default model:
 
 ```env
-OPENROUTER_MODEL=openai/gpt-oss-120b:free
+OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
 ```
 
 Useful options:

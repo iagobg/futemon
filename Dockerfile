@@ -6,7 +6,7 @@ COPY internal/app ./internal/app
 RUN npm ci \
   && npm run build:css
 
-FROM golang:1.22-bookworm AS build
+FROM golang:1.26.4-bookworm AS build
 
 WORKDIR /src
 COPY go.mod go.sum ./
