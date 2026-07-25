@@ -46,7 +46,7 @@ func TestOpenRouterMatchGeneratorBuildsMatchFromStructuredResponse(t *testing.T)
 	teamA, teamB := llmTestTeams()
 	generator := OpenRouterMatchGenerator{
 		APIKey:     "test-key",
-		Model:      "tencent/hy3:free",
+		Model:      "nvidia/nemotron-3-ultra-550b-a55b:free",
 		BaseURL:    server.URL,
 		PromptPath: promptPath,
 		StrictJSON: true,
@@ -110,7 +110,7 @@ func TestOpenRouterMatchGeneratorDoesNotSendStrictSchemaByDefault(t *testing.T) 
 	teamA, teamB := llmTestTeams()
 	generator := OpenRouterMatchGenerator{
 		APIKey:     "test-key",
-		Model:      "tencent/hy3:free",
+		Model:      "nvidia/nemotron-3-ultra-550b-a55b:free",
 		BaseURL:    server.URL,
 		PromptPath: promptPath,
 		HTTPClient: server.Client(),
