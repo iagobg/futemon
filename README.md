@@ -23,7 +23,7 @@ FUTEMON_ARTWORK_DIR=data/pokemon-artwork
 
 Keys used in this quick start:
 
-- `OPENROUTER_API_KEY`: create this in your OpenRouter account. It is the key used to call `openai/gpt-oss-120b:free` or whichever `OPENROUTER_MODEL` you configure.
+- `OPENROUTER_API_KEY`: create this in your OpenRouter account. It is the key used to call `nvidia/nemotron-3-ultra-550b-a55b:free` or whichever `OPENROUTER_MODEL` you configure.
 - `ENV_ENCRYPTION_KEY`: local app secret used to encrypt saved BYOK API keys in SQLite. Use either a raw 32-character string, a 32-byte base64 value, or a 32-byte hex value.
 - `SESSION_SECRET`: local app secret used to sign browser sessions. Use a long random string.
 - `FUTEMON_DB_PATH`: keep this as `data/futemon.db` so local runs use `./data/futemon.db` and Docker uses `/app/data/futemon.db` through the container workdir.
@@ -125,7 +125,7 @@ OPENROUTER_API_KEY=sk-or-...
 Default model:
 
 ```env
-OPENROUTER_MODEL=meta-llama/llama-3.3-70b-instruct:free
+OPENROUTER_MODEL=nvidia/nemotron-3-ultra-550b-a55b:free
 ```
 
 Useful options:
@@ -133,11 +133,14 @@ Useful options:
 ```env
 OPENROUTER_API_KEY=sk-or-...
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_TIMEOUT_SECONDS=120
+OPENROUTER_TIMEOUT_SECONDS=180
+OPENROUTER_MAX_COMPLETION_TOKENS=6000
+OPENROUTER_REASONING_EFFORT=low
+OPENROUTER_REASONING_EXCLUDE=1
 FUTEMON_LLM_PROMPT_PATH=examples/systemprompt.md
 FUTEMON_LLM_DISABLED=0
 FUTEMON_LLM_FALLBACK_ON_ERROR=0
-FUTEMON_LLM_STRICT_SCHEMA=0
+FUTEMON_LLM_STRICT_SCHEMA=1
 ```
 
 Notes:
@@ -146,6 +149,8 @@ Notes:
 - If `FUTEMON_LLM_FALLBACK_ON_ERROR=1`, LLM failures fall back to the sample simulation.
 - By default, LLM failures are returned as errors so they can be diagnosed from server logs.
 - `FUTEMON_LLM_STRICT_SCHEMA=1` sends `response_format: json_schema`; leave it off if the selected model/provider rejects strict structured output.
+- `OPENROUTER_MAX_COMPLETION_TOKENS` should be high enough for the full match JSON; reasoning models can otherwise stop mid-object before the HTTP timeout.
+- `OPENROUTER_REASONING_EFFORT=low` with `OPENROUTER_REASONING_EXCLUDE=1` allows bounded reasoning while keeping reasoning data out of `message.content`.
 - The current model handles the shorter systemprompt (systemprompt.md) better, depending on the model you're using you may have better results with systemprompt_longer.md
 
 ## Rate Limit And BYOK

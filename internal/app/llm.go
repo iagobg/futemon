@@ -11,14 +11,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
 
 const defaultOpenRouterBaseURL = "https://openrouter.ai/api/v1"
-const defaultOpenRouterModel = "openai/gpt-oss-120b:free"
+const defaultOpenRouterModel = "nvidia/nemotron-3-ultra-550b-a55b:free"
 const defaultSystemPromptPath = "examples/systemprompt.md"
-const defaultOpenRouterTimeout = 120 * time.Second
+const defaultOpenRouterTimeout = 180 * time.Second
+const defaultOpenRouterMaxCompletionTokens = 6000
 
 type MatchGenerator interface {
 	GenerateMatch(ctx context.Context, teamA Team, teamB Team) (MatchResult, error)
@@ -130,6 +132,41 @@ func openRouterTimeout() time.Duration {
 	return seconds
 }
 
+func openRouterMaxCompletionTokens() int {
+	value := strings.TrimSpace(os.Getenv("OPENROUTER_MAX_COMPLETION_TOKENS"))
+	if value == "" {
+		return defaultOpenRouterMaxCompletionTokens
+	}
+	tokens, err := strconv.Atoi(value)
+	if err != nil || tokens <= 0 {
+		return defaultOpenRouterMaxCompletionTokens
+	}
+	return tokens
+}
+
+func openRouterReasoningFromEnv() *openRouterReasoningConfig {
+	effort := strings.TrimSpace(os.Getenv("OPENROUTER_REASONING_EFFORT"))
+	maxTokensValue := strings.TrimSpace(os.Getenv("OPENROUTER_REASONING_MAX_TOKENS"))
+	exclude := os.Getenv("OPENROUTER_REASONING_EXCLUDE") == "1"
+	enabled := os.Getenv("OPENROUTER_REASONING_ENABLED") == "1"
+	if effort == "" && maxTokensValue == "" && !exclude && !enabled {
+		return nil
+	}
+
+	reasoning := &openRouterReasoningConfig{
+		Effort:  effort,
+		Exclude: exclude,
+		Enabled: enabled,
+	}
+	if maxTokensValue != "" {
+		maxTokens, err := strconv.Atoi(maxTokensValue)
+		if err == nil && maxTokens > 0 {
+			reasoning.MaxTokens = maxTokens
+		}
+	}
+	return reasoning
+}
+
 func (g OpenRouterMatchGenerator) GenerateMatch(ctx context.Context, teamA Team, teamB Team) (MatchResult, error) {
 	if strings.TrimSpace(g.APIKey) == "" {
 		return MatchResult{}, errors.New("missing OpenRouter API key")
@@ -170,7 +207,8 @@ func (g OpenRouterMatchGenerator) complete(ctx context.Context, systemPrompt str
 			{Role: "user", Content: userPrompt},
 		},
 		Temperature:         0.85,
-		MaxCompletionTokens: 2600,
+		MaxCompletionTokens: openRouterMaxCompletionTokens(),
+		Reasoning:           openRouterReasoningFromEnv(),
 	}
 	if g.StrictJSON {
 		requestBody.ResponseFormat = matchResponseFormat()
@@ -215,17 +253,25 @@ func (g OpenRouterMatchGenerator) complete(ctx context.Context, systemPrompt str
 }
 
 type openRouterChatRequest struct {
-	Model               string              `json:"model"`
-	Messages            []openRouterMessage `json:"messages"`
-	Temperature         float64             `json:"temperature,omitempty"`
-	MaxCompletionTokens int                 `json:"max_completion_tokens,omitempty"`
-	ResponseFormat      map[string]any      `json:"response_format,omitempty"`
-	Stream              bool                `json:"stream"`
+	Model               string                     `json:"model"`
+	Messages            []openRouterMessage        `json:"messages"`
+	Temperature         float64                    `json:"temperature,omitempty"`
+	MaxCompletionTokens int                        `json:"max_completion_tokens,omitempty"`
+	ResponseFormat      map[string]any             `json:"response_format,omitempty"`
+	Reasoning           *openRouterReasoningConfig `json:"reasoning,omitempty"`
+	Stream              bool                       `json:"stream"`
 }
 
 type openRouterMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type openRouterReasoningConfig struct {
+	Effort    string `json:"effort,omitempty"`
+	MaxTokens int    `json:"max_tokens,omitempty"`
+	Exclude   bool   `json:"exclude,omitempty"`
+	Enabled   bool   `json:"enabled,omitempty"`
 }
 
 type openRouterChatResponse struct {

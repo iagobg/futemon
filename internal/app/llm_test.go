@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenRouterMatchGeneratorBuildsMatchFromStructuredResponse(t *testing.T) {
@@ -56,7 +58,7 @@ func TestOpenRouterMatchGeneratorBuildsMatchFromStructuredResponse(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requestBody.Model != "openai/gpt-oss-120b:free" {
+	if requestBody.Model != "nvidia/nemotron-3-ultra-550b-a55b:free" {
 		t.Fatalf("model = %q", requestBody.Model)
 	}
 	if requestBody.ResponseFormat["type"] != "json_schema" {
@@ -151,6 +153,50 @@ func TestOpenRouterMatchGeneratorReturnsTypedHTTPError(t *testing.T) {
 	}
 }
 
+func TestOpenRouterLiveCompletionShape(t *testing.T) {
+	if os.Getenv("FUTEMON_OPENROUTER_LIVE_TEST") != "1" {
+		t.Skip("set FUTEMON_OPENROUTER_LIVE_TEST=1 to call OpenRouter")
+	}
+	apiKey := strings.TrimSpace(os.Getenv("OPENROUTER_API_KEY"))
+	if apiKey == "" {
+		t.Fatal("OPENROUTER_API_KEY is required")
+	}
+
+	teamA, teamB := llmTestTeams()
+	generator := NewOpenRouterMatchGeneratorFromEnv(apiKey)
+	systemPrompt, err := loadSystemPrompt(generator.PromptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	content, err := generator.complete(context.Background(), systemPrompt, buildMatchUserPrompt(teamA, teamB, AnalyzeMatch(teamA, teamB)))
+	if err != nil {
+		t.Fatalf("complete failed after %s: %v", time.Since(start).Round(time.Millisecond), err)
+	}
+	extracted := extractJSONObject(content)
+	t.Logf("model=%s strict_json=%v duration=%s content_len=%d extracted_len=%d",
+		generator.Model, generator.StrictJSON, time.Since(start).Round(time.Millisecond), len(content), len(extracted))
+	t.Logf("content_prefix=%q", clipForTestLog(content, 700))
+	if len(content) > 700 {
+		t.Logf("content_suffix=%q", clipForTestLog(content[len(content)-700:], 700))
+	}
+
+	payload, err := ParseSimulationPayload([]byte(extracted))
+	if err != nil {
+		t.Fatalf("parse extracted JSON failed: %v", err)
+	}
+	t.Logf("events=%d consequences=%d", len(payload.Events), len(payload.Consequences))
+}
+
+func clipForTestLog(value string, limit int) string {
+	value = strings.TrimSpace(value)
+	if len(value) <= limit {
+		return value
+	}
+	return fmt.Sprintf("%s...", value[:limit])
+}
+
 func TestBuildMatchUserPromptIncludesAbilityDescription(t *testing.T) {
 	teamA, teamB := llmTestTeams()
 	teamA.Goalkeeper.Abilities = `[{"name":"torrent","description":"Powers up Water-type moves in a pinch."}]`
@@ -203,6 +249,23 @@ func TestMatchResponseFormatUsesPortugueseGoalkeeperRef(t *testing.T) {
 	}
 	if strings.Contains(string(data), "team_a") || strings.Contains(string(data), "team_b") || !strings.Contains(string(data), "time_ref") || !strings.Contains(string(data), "time_da_casa") {
 		t.Fatalf("response format should expose Portuguese team refs only: %s", string(data))
+	}
+}
+
+func TestOpenRouterRequestOptionsUseEnv(t *testing.T) {
+	t.Setenv("OPENROUTER_MAX_COMPLETION_TOKENS", "6000")
+	t.Setenv("OPENROUTER_REASONING_EFFORT", "low")
+	t.Setenv("OPENROUTER_REASONING_EXCLUDE", "1")
+
+	if got := openRouterMaxCompletionTokens(); got != 6000 {
+		t.Fatalf("max completion tokens = %d", got)
+	}
+	reasoning := openRouterReasoningFromEnv()
+	if reasoning == nil {
+		t.Fatal("expected reasoning config")
+	}
+	if reasoning.Effort != "low" || !reasoning.Exclude {
+		t.Fatalf("reasoning config = %+v", reasoning)
 	}
 }
 
